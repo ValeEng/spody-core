@@ -41,6 +41,7 @@ currently modeled).
 
 ---
 
+### Build
 
 ```bash
 gcc -Iinclude src/*.c -o example1
