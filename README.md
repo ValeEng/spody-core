@@ -15,7 +15,7 @@ currently modeled).
 
 ## Key Features
 - **Main kernels**
-  - Thread safe ephemeris kernel on DE440
+  - Thread safe ephemeris kernel on DE440 : https://ssd.jpl.nasa.gov/ftp/eph/planets/ascii/
   - Thread safe gravitational armonics kernel on GRGM1200A : https://pgda.gsfc.nasa.gov/products/50
 
 - **High-precision numerical integrators**
