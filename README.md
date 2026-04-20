@@ -28,7 +28,7 @@ The library provides a clean, modular API covering the core pillars of orbital m
 | `eclipse` | Detects solar eclipse conditions (umbra/penumbra) for orbiting objects |
 | `harmonics` | Computes gravitational acceleration using spherical harmonic coefficients (e.g. GRGM1200A) |
 | `math` | Shared math utilities (rotation matrices, vector operations) |
-| `mapping` | Cross-platform memory-mapped file I/O for fast ephemeris access |
+| `mapping` | Cross-platform memory-mapped file I/O |
 
 ---
 
