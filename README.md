@@ -32,12 +32,13 @@ To compile the library on your local machine:
 
 2. **Generate build files and compile**:
    ```bash
-  mkdir build
-  cd build
-  cmake ..
-  cmake --build .
+   mkdir build
+   cd build
+   cmake ..
+   cmake --build .
 
 3. **Installation**:
+
   If you want to create a clean package for distribution (containing only the necessary headers and the compiled library), use the following command:
 
     ```bash
