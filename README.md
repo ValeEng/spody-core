@@ -16,7 +16,7 @@ The library provides a clean, modular API covering the core pillars of orbital m
 
 - 🌍 **Ephemeris parsing** — ASCII planetary data from JPL
 - 🌑 **Eclipse detection** — Umbra and penumbra modeling
-- 🌐 **Spherical harmonics gravity** — High-fidelity lunar gravity 
+- 🌐 **Spherical harmonics gravity** — High-fidelity lunar gravity
 
 ---
 
@@ -24,9 +24,11 @@ The library provides a clean, modular API covering the core pillars of orbital m
 
 | Module | Description |
 |---|---|
-| `ephemeris` | Parses and queries JPL ASCII ephemeris files for planetary positions and velocities (ex. DE440)|
+| `ephemeris` | Parses and queries JPL ASCII ephemeris files for planetary positions and velocities (e.g. DE440) |
 | `eclipse` | Detects solar eclipse conditions (umbra/penumbra) for orbiting objects |
-| `harmonics` | Computes gravitational acceleration using spherical harmonic coefficients (ex. GRGM1200A) |
+| `harmonics` | Computes gravitational acceleration using spherical harmonic coefficients (e.g. GRGM1200A) |
+| `math` | Shared math utilities (rotation matrices, vector operations) |
+| `mapping` | Cross-platform memory-mapped file I/O for fast ephemeris access |
 
 ---
 
@@ -47,10 +49,15 @@ Spody Core relies on standard, publicly available scientific datasets:
 
 ```
 spody-core/
-├── include/
-│   └── spody_core.h        # Public umbrella header — include this in your project
-├── src/                    # Source code
-├── tvb/                    # Test/validation benchmarks
+├── include/                # Public headers — include this folder in your build
+│   ├── spody_core.h        # Umbrella header (include this one)
+│   ├── spody_eclipse.h
+│   ├── spody_ephemeris.h
+│   ├── spody_harmonics.h
+│   ├── spody_mapping.h
+│   └── spody_math.h
+├── src/                    # Implementation files (.c)
+├── tvb/                    # Test / validation benchmarks
 ├── CMakeLists.txt
 ├── LICENSE
 └── README.md
@@ -61,74 +68,101 @@ spody-core/
 ## Prerequisites
 
 - A C99-compatible compiler (GCC, Clang, or MSVC)
-- **CMake** ≥ 3.10
+- **CMake** ≥ 3.10 *(only needed for Options A and B below)*
 - On Unix/Linux/macOS: the standard math library (`libm`) — linked automatically
 
 ---
 
-## Build Instructions
+## Integration
 
-### 1. Clone the repository
+There are three ways to use Spody Core in your project. Pick the one that fits your workflow.
+
+### Option A — Build standalone and link against the compiled library
+
+Use this if you want a precompiled `.a`/`.lib` you can link against, or if you're distributing the library separately from your app.
+
+**1. Clone and build**
 
 ```bash
 git clone https://github.com/ValeEng/spody-core.git
 cd spody-core
-```
-
-### 2. Configure and compile
-
-```bash
-mkdir build
-cd build
+mkdir build && cd build
 cmake ..
 cmake --build .
 ```
 
-This produces `libspody_core.a` (Unix) or `spody_core.lib` (Windows) inside the `build/` directory.
+This produces `libspody_core.a` (Unix/macOS) or `spody_core.lib` (Windows) inside the `build/` directory.
 
-### 3. Install (optional)
-
-To generate a clean distribution package with headers and the compiled library:
+**2. (Optional) Install to a clean distribution folder**
 
 ```bash
 cmake --install . --prefix ./dist
 ```
 
 This creates:
+
 ```
 dist/
 ├── include/
 │   ├── spody_core.h
-│   ├── eclipse.h
-│   ├── ephemeris.h
-│   ├── harmonics.h
-│   └── spody_mapping.h
+│   ├── spody_eclipse.h
+│   ├── spody_ephemeris.h
+│   ├── spody_harmonics.h
+│   ├── spody_mapping.h
+│   └── spody_math.h
 └── lib/
     └── libspody_core.a
 ```
 
----
-
-## Usage
-
-Include the umbrella header in your project:
-
-```c
-#include "spody_core.h"
-```
-
-Compile and link against the library:
+**3. Compile your program**
 
 ```bash
 gcc main.c -I./dist/include -L./dist/lib -lspody_core -lm -o my_space_app
 ```
 
-Or, if integrating via CMake, add to your `CMakeLists.txt`:
+---
+
+### Option B — Use as a CMake sub-project (recommended)
+
+Use this if your project is already CMake-based. Add `spody-core/` as a subdirectory (or a git submodule) of your project:
 
 ```cmake
-add_subdirectory(spody-core)
-target_link_libraries(your_target PRIVATE spody_core)
+add_subdirectory(external/spody-core)
+
+target_link_libraries(my_target PRIVATE spody_core)
 ```
+
+CMake handles include paths, the `libm` link, and build order automatically. No install step needed.
+
+---
+
+### Option C — Drop-in sources (no build system)
+
+Use this for simple projects, Makefile-based builds, embedded targets, or when you just want to compile everything in one shot. Copy `include/` and `src/` into your project, then:
+
+```bash
+gcc main.c src/spody_*.c -Iinclude -lm -o my_space_app
+```
+
+Or, using wildcard expansion for all library sources:
+
+```bash
+gcc main.c $(ls src/spody_*.c) -Iinclude -lm -o my_space_app
+```
+
+Since all public headers live in `include/`, a single `-Iinclude` is enough.
+
+---
+
+## Usage
+
+Regardless of the integration method, include the umbrella header:
+
+```c
+#include "spody_core.h"
+```
+
+This exposes the full public API (ephemeris, eclipse, harmonics, math, mapping).
 
 ---
 
