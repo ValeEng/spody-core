@@ -1,6 +1,10 @@
 #ifndef SPODY_EPHEMERIS_H
 #define SPODY_EPHEMERIS_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -31,7 +35,7 @@
 
     //debug
 #define DEBUG_CHEBYSHEV 0
-#define DEBUG_MYEPH 0
+#define DEBUG_EPHEMERIS 0
 
     // Conversion units
 #define SECONDSxDAY 86400 
@@ -52,9 +56,7 @@
 
 #define EMRAT 0.813005682214972154E+02 //TBD from JPL DE440
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+
 
 typedef struct { // DE440 has 15 triplets
     double start_epoch;

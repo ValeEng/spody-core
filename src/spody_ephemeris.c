@@ -266,7 +266,7 @@ double chebyshev_evaluate(double time_scaled, const double *coefficients, int n_
 
 int calculate_body_position(MappedEphemeris *map, int target_idx, double jd_epoch, double result[3]) {
     
-    #if DEBUG_MYEPH == 1
+    #if DEBUG_EPHEMERIS == 1
     printf("\n");
     for(int i=0;i<15;i++){
         printf("bodies mapped idx %02d | location %04d | n coeff per comp %02d | n sets per record %d\n", i+1, map->header->location[i], map->header->number_coefficients_per_component[i], map->header->number_complete_sets_coefficients_per_record[i]);
@@ -277,8 +277,8 @@ int calculate_body_position(MappedEphemeris *map, int target_idx, double jd_epoc
     int numeber_coefficients_per_component = map->header->number_coefficients_per_component[target_idx];
     int start_index = map->header->location[target_idx] - 1; // 1-based -> 0-based
     int n_components = 3; // X, Y, Z <--- not to flexible!!!!
-    // 2. Subdivision identification 
 
+    // 2. Subdivision identification 
     int record_id = (int)floor((jd_epoch - map->header->start_epoch)/map->header->days_per_record);
     //printf("Record ID calc: %d\n", record_id);
     EphemerisFile_Record *eprec = map->records[record_id];
@@ -286,7 +286,7 @@ int calculate_body_position(MappedEphemeris *map, int target_idx, double jd_epoc
     double set_duration = block_duration / map->header->number_complete_sets_coefficients_per_record[target_idx];
     int set_id = (int)floor((jd_epoch - eprec->start_epoch) / set_duration); //wich subdivision we need 
     
-    #if DEBUG_MYEPH == 1
+    #if DEBUG_EPHEMERIS == 1
     printf("Record ID: %d | Start epoch header: %f | start epoch record [%d]: %f | JD epoch now : %f \n", record_id, map->header->start_epoch, record_id, map->records[record_id]->start_epoch, jd_epoch);
     printf("Set ID: %d\n", set_id);
     #endif
@@ -305,9 +305,9 @@ int calculate_body_position(MappedEphemeris *map, int target_idx, double jd_epoc
     double tau = (2.0 * jd_epoch - t_gran_start - t_gran_end) / (t_gran_end - t_gran_start); // prob not the best for floting point error 
     double midpoint = 0.5 * (t_gran_start + t_gran_end);
     double half_range = 0.5 * (t_gran_end - t_gran_start);
-    double tau2 = (jd_epoch - midpoint) / half_range; //TBD with some tests
+    //double tau2 = (jd_epoch - midpoint) / half_range; //TBD with some tests
     
-    #if DEBUG_MYEPH == 1
+    #if DEBUG_EPHEMERIS == 1
     printf("Subdivision number: %d|%d, Tau: LP %.21f HP %.21f\n", set_id,map->header->number_complete_sets_coefficients_per_record[target_idx], tau, tau2);
     printf("Gran Start Time: %f | Gran End Time: %f\n",t_gran_start , t_gran_end);
     #endif
@@ -323,7 +323,7 @@ int calculate_body_position(MappedEphemeris *map, int target_idx, double jd_epoc
         // Y ---> offset + n_coeffs
         // Z ---> offset + 2 * n_coeffs
 
-        #if DEBUG_MYEPH == 1
+        #if DEBUG_EPHEMERIS == 1
         printf("Calculating component %d with coeffs starting at index %d\n", i, offset + (i * numeber_coefficients_per_component));
         #endif
 
@@ -357,7 +357,7 @@ int ephemeris_map_file(MappedEphemeris *map, const char *filename) {
 
     map->num_records = remaining_bytes / map->header->bytes_per_record; //we hope it is exact division
     
-    #if DEBUG_MYEPH == 1
+    #if DEBUG_EPHEMERIS == 1
     printf("bytes per record: %d\n", map->header->bytes_per_record);
     printf("Number of records mapped: %zu\n", map->num_records);
     #endif
@@ -369,7 +369,7 @@ int ephemeris_map_file(MappedEphemeris *map, const char *filename) {
     for (size_t i = 0; i < map->num_records; i++) {
         //printf("Mapping record %zu at address %p\n", i, ptr);
         map->records[i] = (EphemerisFile_Record*)ptr;
-        #if DEBUG_MYEPH == 1
+        #if DEBUG_EPHEMERIS == 1
         printf("Mapped record %zu: record number %d, n_coeff %d, start_epoch %.6f, end_epoch %.6f\n", i+1, map->records[i]->record_number, map->records[i]->number_coefficients_per_record, map->records[i]->start_epoch, map->records[i]->end_epoch);
         #endif
         size_t record_bytes = map->header->bytes_per_record; //(sizeof(EphemerisFile_Record) + map->records[i]->number_coefficients_per_record * sizeof(double));
@@ -428,8 +428,8 @@ int spody_createfile_MappedEphemeris(const char *path, const char **file_names, 
     for (int i = 0; i < n_files; i++){
         
         sprintf(ascp_filename, "./%s/ascp%s.%s",path,file_names[i],de); 
-        FILE *file = fopen(ascp_filename,"r");
-        if (!file) { perror("Errore file ASCP"); return -1; }
+        //FILE *file = fopen(ascp_filename,"r");
+        //if (!file) { perror("Errore file ASCP"); return -1; }
         
         returnNumber = create_binary_ephemeris_file(&ep,&old_epoch,ascp_filename,bin_filename); //TBD the append mode in create_binary_ephemeris_file
         printf("old epoch : %d\n",old_epoch);

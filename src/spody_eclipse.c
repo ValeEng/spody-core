@@ -9,7 +9,11 @@ double spody_get_suneclipse( double pos[3], double unit_sat2sun_pos[3], double b
     // Montenbruck and Gill 
     // GMAT like 
     double r = sqrt( pos[0]*pos[0] + pos[1]*pos[1] + pos[2]*pos[2] ); 
-    double c = acos( -(pos[0]*unit_sat2sun_pos[0] + pos[1]*unit_sat2sun_pos[1] + pos[2]*unit_sat2sun_pos[2]) / r);
+    double dot_c = -(pos[0]*unit_sat2sun_pos[0] + pos[1]*unit_sat2sun_pos[1] + pos[2]*unit_sat2sun_pos[2]) / r;
+    if (dot_c > 1.0) dot_c = 1.0;
+    if (dot_c < -1.0) dot_c = -1.0;
+    double c = acos(dot_c);
+
     double aa = sun_app_r *sun_app_r;
     double bb = body_app_r *body_app_r;
     double x = (c * c + aa - bb) / (2 * c);
