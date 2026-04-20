@@ -26,24 +26,27 @@ To build and use this library, you will need:
 To compile the library on your local machine:
 
 1. **Clone the repository**:
+
    ```bash
    git clone [https://github.com/ValeEng/spody-core](https://github.com/ValeEng/spody-core.git)
    cd spody_core
 
 2. **Generate build files and compile**:
+
    ```bash
    mkdir build
    cd build
    cmake ..
    cmake --build .
 
-3. **Installation**:
+**Installation**:
 
   If you want to create a clean package for distribution (containing only the necessary headers and the compiled library), use the following command:
 
-    ```bash
-    cmake --install . --prefix ./dist
-
-4. **Compiling your program**:
   ```bash
-  gcc main.c -I./dist/include -L./dist/lib -lspody_core -lm -o my_space_app
+   cmake --install . --prefix ./dist
+
+**Compiling your program**:
+
+  ```bash
+   gcc main.c -I./dist/include -L./dist/lib -lspody_core -lm -o my_space_app
