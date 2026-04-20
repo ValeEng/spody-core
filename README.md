@@ -88,10 +88,15 @@ git clone https://github.com/ValeEng/spody-core.git
 cd spody-core
 mkdir build && cd build
 cmake ..
-cmake --build .
+cmake --build . --config Release
 ```
 
-This produces `libspody_core.a` (Unix/macOS) or `spody_core.lib` (Windows) inside the `build/` directory.
+> **Note on `--config`:**
+> Multi-config generators (Visual Studio, Xcode) pick the build type at *build* time via `--config`. Single-config generators (Makefile, Ninja) pick it at *configure* time and default to `Release` — you can override with `cmake -DCMAKE_BUILD_TYPE=Debug ..`.
+
+This produces:
+- `build/Release/spody_core.lib` on Windows (MSVC)
+- `build/libspody_core.a` on Linux / macOS
 
 **2. (Optional) Install to a clean distribution folder**
 
@@ -111,7 +116,7 @@ dist/
 │   ├── spody_mapping.h
 │   └── spody_math.h
 └── lib/
-    └── libspody_core.a
+    └── libspody_core.a    (or spody_core.lib on Windows)
 ```
 
 **3. Compile your program**
@@ -141,16 +146,36 @@ CMake handles include paths, the `libm` link, and build order automatically. No 
 Use this for simple projects, Makefile-based builds, embedded targets, or when you just want to compile everything in one shot. Copy `include/` and `src/` into your project, then:
 
 ```bash
-gcc main.c src/spody_*.c -Iinclude -lm -o my_space_app
-```
-
-Or, using wildcard expansion for all library sources:
-
-```bash
-gcc main.c $(ls src/spody_*.c) -Iinclude -lm -o my_space_app
+gcc main.c src/spody_*.c -Iinclude -lm -O2 -o my_space_app
 ```
 
 Since all public headers live in `include/`, a single `-Iinclude` is enough.
+
+---
+
+## Build Options
+
+The `CMakeLists.txt` exposes a few flags you can toggle on the `cmake` command line with `-D<n>=<VALUE>`.
+
+| Option | Default | Description |
+|---|:---:|---|
+| `SPODY_FAST_MATH` | `OFF` | Enables aggressive floating-point optimizations (`/fp:fast` on MSVC, `-ffast-math` on GCC/Clang). Faster but may introduce small numerical drift over long integrations. Leave `OFF` for bit-reproducible results. |
+| `SPODY_WHOLE_PROGRAM_OPT` | `ON` | Enables whole-program / link-time optimization in Release builds (`/GL + /LTCG` on MSVC, `-flto` on GCC/Clang). Slower link, faster runtime. |
+| `SPODY_SILENCE_MSVC_CRT_WARNINGS` | `ON` | On MSVC, silences warnings about "unsafe" standard C functions (`strtok`, `sprintf`, ...). These are portable ISO C functions; the `_s` alternatives are non-portable Microsoft extensions. |
+
+**Example:** maximum-speed build with fast math enabled:
+
+```bash
+cmake .. -DSPODY_FAST_MATH=ON
+cmake --build . --config Release
+```
+
+**Example:** safer numerical build with whole-program optimization disabled:
+
+```bash
+cmake .. -DSPODY_WHOLE_PROGRAM_OPT=OFF
+cmake --build . --config Release
+```
 
 ---
 
