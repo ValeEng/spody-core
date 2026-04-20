@@ -14,9 +14,9 @@
 
 The library provides a clean, modular API covering the core pillars of orbital mechanics:
 
-- 🌍 **Ephemeris parsing** — DE440 ASCII planetary data from JPL
+- 🌍 **Ephemeris parsing** — ASCII planetary data from JPL
 - 🌑 **Eclipse detection** — Umbra and penumbra modeling
-- 🌐 **Spherical harmonics gravity** — High-fidelity lunar gravity via GRGM1200A
+- 🌐 **Spherical harmonics gravity** — High-fidelity lunar gravity 
 
 ---
 
@@ -24,10 +24,9 @@ The library provides a clean, modular API covering the core pillars of orbital m
 
 | Module | Description |
 |---|---|
-| `ephemeris` | Parses and queries JPL DE440 ASCII ephemeris files for planetary positions and velocities |
+| `ephemeris` | Parses and queries JPL ASCII ephemeris files for planetary positions and velocities (ex. DE440)|
 | `eclipse` | Detects solar eclipse conditions (umbra/penumbra) for orbiting objects |
-| `harmonics` | Computes gravitational acceleration using spherical harmonic coefficients (GRGM1200A) |
-| `spody_mapping` | Internal coordinate and state-vector mapping utilities |
+| `harmonics` | Computes gravitational acceleration using spherical harmonic coefficients (ex. GRGM1200A) |
 
 ---
 
@@ -36,7 +35,6 @@ The library provides a clean, modular API covering the core pillars of orbital m
 Spody Core relies on standard, publicly available scientific datasets:
 
 - **JPL DE440 Ephemeris (ASCII)**
-  Planetary positions and velocities.
   → [https://ssd.jpl.nasa.gov/ftp/eph/planets/ascii/](https://ssd.jpl.nasa.gov/ftp/eph/planets/ascii/)
 
 - **GRGM1200A Gravitational Model**
@@ -51,11 +49,7 @@ Spody Core relies on standard, publicly available scientific datasets:
 spody-core/
 ├── include/
 │   └── spody_core.h        # Public umbrella header — include this in your project
-├── src/
-│   ├── eclipse.c / .h      # Eclipse detection logic
-│   ├── ephemeris.c / .h    # Ephemeris parsing and interpolation
-│   ├── harmonics.c / .h    # Spherical harmonics gravity model
-│   └── spody_mapping.c / .h # Coordinate mapping utilities
+├── src/                    # Source code
 ├── tvb/                    # Test/validation benchmarks
 ├── CMakeLists.txt
 ├── LICENSE
