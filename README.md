@@ -10,6 +10,11 @@ The project is organized to separate the public API from the internal implementa
 * **`src/`**: Contains the source code (`.c`) and internal module headers (`.h`).
 * **`CMakeLists.txt`**: The cross-platform build configuration file.
 
+## Key Features
+- **Main kernels to use**
+  - Ephemeris ascii DE440 : https://ssd.jpl.nasa.gov/ftp/eph/planets/ascii/
+  - Gravitational armonics data from GRGM1200A : https://pgda.gsfc.nasa.gov/products/50
+
 ## Prerequisites
 
 To build and use this library, you will need:
