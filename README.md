@@ -1,6 +1,6 @@
 # 🛰️ Spody Core
 
-> **Sp**ace **O**rbital **Dy**namics — A high-performance C library for astrodynamics and space mechanics.
+> **S**imultaneous **P**ropagation of **O**rbital **DY**namics — A high-performance C library for astrodynamics and space mechanics.
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Language: C](https://img.shields.io/badge/Language-C99-lightgrey.svg)](https://en.wikipedia.org/wiki/C99)
