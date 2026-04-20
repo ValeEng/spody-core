@@ -1,47 +1,43 @@
-# SpOdy Core
-**Simultaneous Propagation of Orbital DYnamics — Core Library**
+# Spody Core Library
 
-SpOdy Core is a **high-performance, high-precision orbital dynamics library**
-written in **C**, designed for the **simultaneous propagation of multiple
-independent space objects**. It provides the numerical integrators, orbital
-dynamics models, and propagation engine that can be used in research, simulation,
-and engineering applications.
+**Spody Core** is a high-performance C library designed for space dynamics and astrodynamics calculations. It provides robust tools for ephemeris parsing, eclipse detection, spherical harmonics gravity modeling.
 
-This library focuses on **modularity, efficiency, and scientific rigor**, while
-keeping each trajectory dynamically independent (no mutual perturbations are
-currently modeled).
+## Project Structure
 
----
+The project is organized to separate the public API from the internal implementation logic:
 
-## Key Features
-- **Main kernels**
-  - Thread safe ephemeris kernel on DE440
-  - Thread safe gravitational armonics kernel on GRGM1200A
+* **`include/`**: Contains the public "umbrella" header `spody_core.h`.
+* **`src/`**: Contains the source code (`.c`) and internal module headers (`.h`).
+* **`CMakeLists.txt`**: The cross-platform build configuration file.
 
-- **High-precision numerical integrators**
-  - Runge-Kutta, Adams-Bashforth, and multi-step methods
-  - Step-size control for accurate propagation
+## Prerequisites
 
-- **Flexible orbital dynamics models**
-  - Central-body gravity
-  - Third-body perturbations (optional, applied independently)
-  - Modular and extensible force-model framework
+To build and use this library, you will need:
+- A C compiler (e.g., GCC, Clang, or MSVC).
+- **CMake** version 3.10 or higher.
 
-- **Propagation engine**
-  - Efficient batch propagation of multiple objects
-  - Dynamically independent trajectories
+## Build Instructions
 
-- **Mathematical utilities**
-  - Linear algebra functions
-  - Vectors, matrices, and orbital state operations
+To compile the library on your local machine:
 
-- **Modular API**
-  - Clear interface for integration into external programs
-  - Well-defined public functions and structures
+1. **Clone the repository**:
+   ```bash
+   git clone [https://github.com/ValeEng/spody-core](https://github.com/ValeEng/spody-core.git)
+   cd spody_core
 
----
+2. **Generate build files and compile**:
+   ```bash
+  mkdir build
+  cd build
+  cmake ..
+  cmake --build .
 
-### Build
+3. **Installation**:
+  If you want to create a clean package for distribution (containing only the necessary headers and the compiled library), use the following command:
 
-```bash
-gcc -Iinclude src/*.c -o example1
+    ```bash
+    cmake --install . --prefix ./dist
+
+4. **Compiling your program**:
+  ```bash
+  gcc main.c -I./dist/include -L./dist/lib -lspody_core -lm -o my_space_app
