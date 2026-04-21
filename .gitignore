@@ -36,7 +36,7 @@
 # Folders
 bin/
 obj/
-raw_data/
+
 
 # Compiler cache
 .cache/
@@ -56,3 +56,5 @@ raw_data/
 ehthumbs.db
 Thumbs.db
 add_license_header.ps1
+raw_data/GRGM1200A/gggrx_1200a_sha.lbl
+raw_data/GRGM1200A/gggrx_1200a_sha.tab
