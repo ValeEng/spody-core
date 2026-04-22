@@ -55,7 +55,6 @@ extern "C" {
     // Conversion units
 #define SECONDSxDAY 86400 
 
-
     //gravitational parameters KM^3/s^2
 #define EARTH_MU 398600.4415 //398600.435507 //KM -->//(GRAV_CONST * EARTH_MASS) // m^3 s^-2
 #define MOON_MU 4902.8005821478 //4902.798815861232 // 4902.800118 KM -->// (GRAV_CONST * MOON_MASS) // SUN_MU / ( 328900.56 * ( 1.0 + 81.30059 ) ) m^3 s^-2
@@ -70,8 +69,6 @@ extern "C" {
 #define PLUTO_MU 981.60088770700
 
 #define EMRAT 0.813005682214972154E+02 //TBD from JPL DE440
-
-
 
 typedef struct { // DE440 has 15 triplets
     double start_epoch;
@@ -99,27 +96,10 @@ typedef struct {
     size_t num_records;
 } MappedEphemeris;
 
-/*my epheermis JPL reader*/
-
-    //file maniupaltion
-int read_ephemeris_file_header(FILE *file, EphemerisFile_Header *ep );
-int read_record_block(FILE *fp, EphemerisFile_Header *ep, EphemerisFile_Record *eprec);
-int create_binary_ephemeris_file(EphemerisFile_Header *ep, int *old_epoch, const char *ascp_filename, const char *bin_filename);
-double fds2cd(char *str);
-    
-    //position calculation
-double chebyshev_evaluate(double time_scaled, const double *coefficients, int n_coeffs);
-int calculate_body_position(MappedEphemeris *map, int target_idx, double jd_epoch, double result[3]);
-    
-    //mapping functions
-int ephemeris_map_file(MappedEphemeris *map, const char *filename);
-int ephemeris_unmap_file(MappedEphemeris *map);
-
-    //wrapper
 int spody_createfile_MappedEphemeris(const char *path, const char **file_names, const int n_files, const char *de);
 int spody_setup_MappedEphemeris(MappedEphemeris *map, const char *filename);
 int spody_setup_partialMappedEphemeris(MappedEphemeris *map, const char *filename, double in_start, double in_end);
-int spody_get_position(MappedEphemeris *map, int central_idx ,int target_idx, double jd_epoch, double result[3]);
+int spody_get_ephposition(MappedEphemeris *map, int central_idx ,int target_idx, double jd_epoch, double result[3]);
 int spody_get_lunarlibrationangles(MappedEphemeris *map, double jd_epoch, double result[3]);
     
 /* ICRF (J2000) -> Lunar body-fixed (PA frame)

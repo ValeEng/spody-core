@@ -35,18 +35,15 @@
 extern "C" {
 #endif
 
-#include <stdio.h>
-
 #define DEBUG_HARMONICS 0
-
 #define BUFFER_SIZE_HG 256
 
 typedef struct {
     int N;
     double R_ref;
     double GM;
-    double *C; // normalized coefficients GRAIL 
-    double *S; // normalized coefficients GRAIL
+    double *C; // normalized coefficients (GRAIL) 
+    double *S; // normalized coefficients (GRAIL)
     double *recurr_a; // common recurrence factors
     double *recurr_b; // common recurrence factors
 } HarmonicGravityData;
@@ -60,9 +57,7 @@ typedef struct {
     double *imag;
 } HarmonicGravity;
 
-int read_spherical_harmonics_file(FILE *file, HarmonicGravityData *pm, int degree);
-void compute_harmonic_lunar_gravity_hpc(HarmonicGravity *hg, double pos[3], double acc_out[3]);
-
+void spody_get_hgaccbodyfixed(HarmonicGravity *hg, double pos[3], double acc_out[3]);
 int spody_load_HarmonicGravityData(HarmonicGravityData *hgd, const char *filename, int degree);
 int spody_setup_HarmonicGravity(HarmonicGravity *hg, HarmonicGravityData *hgd);
 int spody_free_HarmonicGravity(HarmonicGravity *hg);

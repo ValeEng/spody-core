@@ -20,7 +20,7 @@
 #include "spody_harmonics.h"
 
 
-int read_spherical_harmonics_file(FILE *file, HarmonicGravityData *pm, int degree) {
+static int read_spherical_harmonics_file(FILE *file, HarmonicGravityData *pm, int degree) {
     char line[BUFFER_SIZE_HG];
 
     if (!fgets(line, sizeof(line), file)) return -1;
@@ -95,7 +95,7 @@ int read_spherical_harmonics_file(FILE *file, HarmonicGravityData *pm, int degre
     return 0;
 }
 
-void compute_harmonic_lunar_gravity_hpc(HarmonicGravity *hg, double pos[3], double acc_out[3]) {
+void spody_get_hgaccbodyfixed(HarmonicGravity *hg, double pos[3], double acc_out[3]) {
 
     //https://hanspeterschaub.info/Papers/Martin2020a.pdf
     

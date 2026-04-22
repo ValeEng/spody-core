@@ -15,7 +15,7 @@
  */
 #include "spody_ephemeris.h"
 
-int read_ephemeris_file_header(FILE *file, EphemerisFile_Header *ep ) {
+static int read_ephemeris_file_header(FILE *file, EphemerisFile_Header *ep ) {
     //parsing for de440
 
     int found_group = 0; 
@@ -110,7 +110,7 @@ int read_ephemeris_file_header(FILE *file, EphemerisFile_Header *ep ) {
     return 0;
 }
 
-double fds2cd(char *str) {
+static double fds2cd(char *str) {
     //parse fortran "double" string to c double 
 
     char temp[64];
@@ -125,7 +125,7 @@ double fds2cd(char *str) {
     return strtod(temp, NULL);
 }
 
-int read_record_block(FILE *fp, EphemerisFile_Header *ep, EphemerisFile_Record *eprec) {
+static int read_record_block(FILE *fp, EphemerisFile_Header *ep, EphemerisFile_Record *eprec) {
    
     char line[BUFFER_SIZE_EPH];
     int n_coeff_expected = 0;
@@ -170,7 +170,7 @@ int read_record_block(FILE *fp, EphemerisFile_Header *ep, EphemerisFile_Record *
     return 1; //good 
 }
 
-int create_binary_ephemeris_file(EphemerisFile_Header *ep, int *old_epoch, const char *ascp_filename, const char *bin_filename) {
+static int create_binary_ephemeris_file(EphemerisFile_Header *ep, int *old_epoch, const char *ascp_filename, const char *bin_filename) {
     printf("in create binary\n");
     FILE *fp_ascp = fopen(ascp_filename, "r");
     if (!fp_ascp) { perror("Errore file ascp"); return -1; }
@@ -234,7 +234,7 @@ int create_binary_ephemeris_file(EphemerisFile_Header *ep, int *old_epoch, const
  * @return The polynomial value at the given time_scaled.
  */
 
-double chebyshev_evaluate(double time_scaled, const double *coefficients, int n_coeffs) {
+static double chebyshev_evaluate(double time_scaled, const double *coefficients, int n_coeffs) {
     if (n_coeffs <= 0) return 0.0;
     if (n_coeffs == 1) return coefficients[0];
 
@@ -279,7 +279,7 @@ double chebyshev_evaluate(double time_scaled, const double *coefficients, int n_
  * @return 1 if successful, 0 if the date is out of range or data is invalid.
  */
 
-int calculate_body_position(MappedEphemeris *map, int target_idx, double jd_epoch, double result[3]) {
+static int calculate_body_position(MappedEphemeris *map, int target_idx, double jd_epoch, double result[3]) {
     
     #if DEBUG_EPHEMERIS == 1
     printf("\n");
@@ -351,7 +351,7 @@ int calculate_body_position(MappedEphemeris *map, int target_idx, double jd_epoc
 
 //MAPPING FUNCTIONS--------------------------------------------------------------------------------------------------   
 
-int ephemeris_map_file(MappedEphemeris *map, const char *filename) {
+static int ephemeris_map_file(MappedEphemeris *map, const char *filename) {
     
     if (!map) return -1; //if NULL exit
 
@@ -395,7 +395,7 @@ int ephemeris_map_file(MappedEphemeris *map, const char *filename) {
     return 0;
 }
 
-int ephemeris_unmap_file(MappedEphemeris *map) {
+static int ephemeris_unmap_file(MappedEphemeris *map) {
     if (!map) return -1;
 
     free(map->records);
@@ -478,7 +478,7 @@ int spody_setup_MappedEphemeris(MappedEphemeris *map, const char *filename){
     return returnNumber;
 }
 
-int spody_get_position(MappedEphemeris *map, int central_idx ,int target_idx, double jd_epoch, double result[3]){
+int spody_get_ephposition(MappedEphemeris *map, int central_idx ,int target_idx, double jd_epoch, double result[3]){
 
 /*****************NAIF ID********************
     SUN     = 10

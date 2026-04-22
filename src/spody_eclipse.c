@@ -20,7 +20,7 @@
 #include "spody_eclipse.h"
 
 
-double spody_get_suneclipse( double pos[3], double unit_sat2sun_pos[3], double body_app_r, double sun_app_r){
+double spody_get_percentofsunlight( double pos[3], double unit_sat2sun_pos[3], double body_app_r, double sun_app_r){
     // Montenbruck and Gill 
     // GMAT like 
     double r = sqrt( pos[0]*pos[0] + pos[1]*pos[1] + pos[2]*pos[2] ); 
@@ -143,7 +143,7 @@ double spody_get_sateclipsestatus( double occulting2sat_pos[3], double occulting
 
             #endif
 
-            double se = spody_get_suneclipse(occulting2sat_pos, unit_sat2sun_pos, b, a);
+            double se = spody_get_percentofsunlight(occulting2sat_pos, unit_sat2sun_pos, b, a);
 
             #if DEBUG_ECLIPSE == 1
             printf("[eclipse_08] partial eclipse case -> suneclipse: %.12f \n", se);
