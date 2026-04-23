@@ -25,6 +25,7 @@ extern "C" {
 #include "spody_harmonics.h"
 #include "spody_eclipse.h"
 #include "spody_math.h"
+#include "spody_const.h"
 
 
 #ifdef __cplusplus

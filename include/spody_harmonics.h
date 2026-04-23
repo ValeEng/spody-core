@@ -35,7 +35,9 @@
 extern "C" {
 #endif
 
-#define DEBUG_HARMONICS 0
+    //debug
+#define DEBUG_HARMONICS 0 // 0 = no debug | 1 = debug |---> CODE TESTING
+
 #define BUFFER_SIZE_HG 256
 
 typedef struct {
