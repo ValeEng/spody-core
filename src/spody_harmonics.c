@@ -174,38 +174,32 @@ void spody_get_hgaccbodyfixed(HarmonicGravity *hg, double pos[3], double acc_out
         if (n >= 2) {
 
             double s1 = 0, s2 = 0, s3 = 0, s4 = 0;
+            int row_start = n * (n + 1) / 2;
 
             for (int m = 0; m <= n; m++) {
 
-                int k = (n * (n + 1) / 2) + m;
+                int k = row_start + m;
 
                 double C = hg->hgd->C[k];
                 double S = hg->hgd->S[k];
 
-                double D = C * real[m] + S * imag[m]; 
-                
+                double D = C * real[m] + S * imag[m];
+
                 if (m > 0) {
-                    double E = C * real[m-1] + S * imag[m-1]; 
-                    double F = S * real[m-1] - C * imag[m-1]; 
+                    double E = C * real[m-1] + S * imag[m-1];
+                    double F = S * real[m-1] - C * imag[m-1];
                     s1 += m * r_n[m] * E;
                     s2 += m * r_n[m] * F;
-
                 }
 
-                if (m!=n){ //because r_n[n+1] is not defined and nlm_on_nlm1 save usa with m-n = 0 at numerator
-                    double delta = 0.0;
-                    if (m == 0)delta = 1.0;  
-                    double nlm_on_nlm1 = sqrt((n - m)*(n + m + 1.0) * (2.0-delta) / 2.0);
-                    s3 += nlm_on_nlm1* r_n[m+1] * D; //?
+                if (m != n){ //because r_n[n+1] is not defined and recurr_s3 has m-n=0 at numerator
+                    s3 += hg->hgd->recurr_s3[k] * r_n[m+1] * D;
                 }
 
-                double delta = 0.0;
-                if (m == 0)delta = 1.0;  
-                double nlm_on_nl1m1 = sqrt((n + m + 2.0)*(n + m + 1.0)*(2.0*n + 1.0)*(2.0 - delta) / (2.0*(2*n + 3.0)));
-                s4 += nlm_on_nl1m1* r_np1[m+1] * D;
-                
+                s4 += hg->hgd->recurr_s4[k] * r_np1[m+1] * D;
+
                 #if DEBUG_HARMONICS == 1
-                printf("s1 += %.21e | s2 += %.21e | s3 += %.21e | s4 += %.21e (n=%03d m=%03d)\n", m * r_n[m] * D, m * r_n[m] * (S * real[m] - C * imag[m]), r_np1[m] * D, nlm_on_nl1m1* r_np1[m+1] * D, n, m);
+                printf("s1 += %.21e | s2 += %.21e | s3 += %.21e | s4 += %.21e (n=%03d m=%03d)\n", m * r_n[m] * D, m * r_n[m] * (S * real[m] - C * imag[m]), r_np1[m] * D, hg->hgd->recurr_s4[k]* r_np1[m+1] * D, n, m);
                 #endif
             }
             //
@@ -254,40 +248,54 @@ int spody_load_HarmonicGravityData(HarmonicGravityData *hgd, const char *filenam
     int size = (file_degree + 2) * (file_degree + 3) / 2;
     hgd->recurr_a = malloc(size * sizeof(double));
     hgd->recurr_b = malloc(size * sizeof(double));
+    hgd->recurr_s3 = malloc(size * sizeof(double));
+    hgd->recurr_s4 = malloc(size * sizeof(double));
     memset(hgd->recurr_a, 0, size * sizeof(double));
     memset(hgd->recurr_b, 0, size * sizeof(double));
+    memset(hgd->recurr_s3, 0, size * sizeof(double));
+    memset(hgd->recurr_s4, 0, size * sizeof(double));
 
     for (int n = 0; n <= file_degree + 1; n++) {
 
         for (int m = 0; m <= n; m++) {
             int i = (n * (n + 1) / 2) + m;
-            
+
             if (n == m) {
                 //printf("Calculating recurr_a for n=%d m=%d at index %d\n", n, m, i);
                 // diagonal elements (sectorial)
-                if (n == 0) { 
+                if (n == 0) {
                     hgd->recurr_a[i] = 1.0; //start
                     //printf("Set recurr_a[%d] = %.12f\n", i, hg->recurr_a[i]);
-                }else if (n == 1) { 
+                }else if (n == 1) {
                     hgd->recurr_a[i] = sqrt(3.0); // from Pines 19.. DeMars 2008 and GMAT
                 }else {
                     // diagonal elements from A(n-1, n-1) to A(n, n)
-                    hgd->recurr_a[i] = sqrt((double)(2.0 * n + 1.0) / (2.0 * n)); //the same : sqrt((double)(1.0 + (1.0 / (2.0 * n)))); 
+                    hgd->recurr_a[i] = sqrt((double)(2.0 * n + 1.0) / (2.0 * n)); //the same : sqrt((double)(1.0 + (1.0 / (2.0 * n))));
                 }
             }else {
                 //printf("Calculating recurr_a and recurr_b for n=%d m=%d at index %d\n", n, m, i);
                 // column (Tesseral and zonal)
-                hgd->recurr_a[i] = sqrt((double)((2.0 * n + 1.0) * (2.0 * n - 1.0)) / ((n - m) * (n + m))); 
+                hgd->recurr_a[i] = sqrt((double)((2.0 * n + 1.0) * (2.0 * n - 1.0)) / ((n - m) * (n + m)));
                 // multiplay : u * A[n-1][m]
-                
-                if (n - m >= 2) { 
-                    hgd->recurr_b[i] = sqrt((double)((2.0 * n + 1.0) * (n + m - 1.0) * (n - m - 1.0)) / 
-                                            ((2.0 * n - 3.0) * (n + m) * (n - m))); 
+
+                if (n - m >= 2) {
+                    hgd->recurr_b[i] = sqrt((double)((2.0 * n + 1.0) * (n + m - 1.0) * (n - m - 1.0)) /
+                                            ((2.0 * n - 3.0) * (n + m) * (n - m)));
                     // multiplay : A[n-2][m]
                 } else {
                     // we dont need this brench thanks to the memset
-                    //hg->recurr_b[i] = 0.0; 
+                    //hg->recurr_b[i] = 0.0;
                 }
+            }
+
+            // gravity-accumulation factors (precomputed, only n >= 2 are used)
+            if (n >= 2) {
+                double delta = (m == 0) ? 1.0 : 0.0;
+                if (m != n) {
+                    hgd->recurr_s3[i] = sqrt((n - m) * (n + m + 1.0) * (2.0 - delta) / 2.0);
+                }
+                hgd->recurr_s4[i] = sqrt((n + m + 2.0) * (n + m + 1.0) * (2.0 * n + 1.0) * (2.0 - delta) /
+                                        (2.0 * (2.0 * n + 3.0)));
             }
         }
     }
@@ -335,5 +343,7 @@ int spody_free_HarmonicGravityData(HarmonicGravityData *hgd) {
     if (hgd->S) free(hgd->S);
     if (hgd->recurr_a) free(hgd->recurr_a);
     if (hgd->recurr_b) free(hgd->recurr_b);
+    if (hgd->recurr_s3) free(hgd->recurr_s3);
+    if (hgd->recurr_s4) free(hgd->recurr_s4);
     return 0;
 }

@@ -52,6 +52,7 @@ extern "C" {
 #define DEBUG_EPHEMERIS 0 // 0 = no debug | 1 = debug |---> CODE TESTING
 
 #define BUFFER_SIZE_EPH 256
+#define EPH_CACHE_SLOTS 15
 
 typedef struct { // DE440 has 15 triplets
     double start_epoch;
@@ -77,12 +78,18 @@ typedef struct {
     EphemerisFile_Header *header;
     EphemerisFile_Record **records;
     size_t num_records;
+    // single-shot cache per DE440 body index: if the same (idx, jd_epoch)
+    // is requested again, return the cached position without re-evaluating Chebyshev.
+    double cache_jd[EPH_CACHE_SLOTS];
+    double cache_pos[EPH_CACHE_SLOTS][3];
+    int cache_valid[EPH_CACHE_SLOTS];
 } MappedEphemeris;
 
 int spody_createfile_MappedEphemeris(const char *path, const char **file_names, const int n_files, const char *de);
 int spody_setup_MappedEphemeris(MappedEphemeris *map, const char *filename);
 int spody_setup_partialMappedEphemeris(MappedEphemeris *map, const char *filename, double in_start, double in_end);
 int spody_get_ephposition(MappedEphemeris *map, int central_idx ,int target_idx, double jd_epoch, double result[3]);
+int spody_get_ephposition_batch(MappedEphemeris *map, int central_idx, const int *target_idx_array, int n_targets, double jd_epoch, double (*result)[3]);
 int spody_get_lunarlibrationangles(MappedEphemeris *map, double jd_epoch, double result[3]);
     
 /* ICRF (J2000) -> Lunar body-fixed (PA frame)

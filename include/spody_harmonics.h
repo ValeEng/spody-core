@@ -41,13 +41,15 @@ extern "C" {
 #define BUFFER_SIZE_HG 256
 
 typedef struct {
-    int N;
-    double R_ref;
-    double GM;
-    double *C; // normalized coefficients (GRAIL) 
+    double *C; // normalized coefficients (GRAIL)
     double *S; // normalized coefficients (GRAIL)
     double *recurr_a; // common recurrence factors
     double *recurr_b; // common recurrence factors
+    double *recurr_s3; // sqrt((n-m)(n+m+1)(2-delta)/2)
+    double *recurr_s4; // sqrt((n+m+2)(n+m+1)(2n+1)(2-delta) / (2(2n+3)))
+    double R_ref;
+    double GM;
+    int N;
 } HarmonicGravityData;
 
 typedef struct {

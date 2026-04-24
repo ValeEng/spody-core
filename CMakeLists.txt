@@ -42,6 +42,9 @@ option(SPODY_WHOLE_PROGRAM_OPT
 option(SPODY_SILENCE_MSVC_CRT_WARNINGS
     "Silence MSVC warnings about 'unsafe' standard C functions" ON)
 
+option(SPODY_BUILD_TVB
+    "Build tests, validations and benchmarks under tvb/" OFF)
+
 # -----------------------------------------------------------------------------
 # C standard
 # -----------------------------------------------------------------------------
@@ -189,6 +192,13 @@ install(TARGETS spody_core
 install(DIRECTORY include/ DESTINATION include)
 
 # -----------------------------------------------------------------------------
+# Tests, validations and benchmarks (opt-in)
+# -----------------------------------------------------------------------------
+if(SPODY_BUILD_TVB)
+    add_subdirectory(tvb)
+endif()
+
+# -----------------------------------------------------------------------------
 # Configuration summary
 # -----------------------------------------------------------------------------
 message(STATUS "")
@@ -196,6 +206,7 @@ message(STATUS "Spody Core configuration:")
 message(STATUS "  Build type              : ${CMAKE_BUILD_TYPE}")
 message(STATUS "  Fast math               : ${SPODY_FAST_MATH}")
 message(STATUS "  Whole-program opt       : ${SPODY_WHOLE_PROGRAM_OPT}")
+message(STATUS "  Build TVB               : ${SPODY_BUILD_TVB}")
 if(MSVC)
     message(STATUS "  Silence MSVC CRT warns  : ${SPODY_SILENCE_MSVC_CRT_WARNINGS}")
 endif()

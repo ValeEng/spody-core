@@ -280,7 +280,16 @@ static double chebyshev_evaluate(double time_scaled, const double *coefficients,
  */
 
 static int calculate_body_position(MappedEphemeris *map, int target_idx, double jd_epoch, double result[3]) {
-    
+
+    // cache hit: same body, same epoch -> skip record/set lookup and Chebyshev
+    if (target_idx >= 0 && target_idx < EPH_CACHE_SLOTS &&
+        map->cache_valid[target_idx] && map->cache_jd[target_idx] == jd_epoch) {
+        result[0] = map->cache_pos[target_idx][0];
+        result[1] = map->cache_pos[target_idx][1];
+        result[2] = map->cache_pos[target_idx][2];
+        return 1;
+    }
+
     #if DEBUG_EPHEMERIS == 1
     printf("\n");
     for(int i=0;i<15;i++){
@@ -344,6 +353,15 @@ static int calculate_body_position(MappedEphemeris *map, int target_idx, double 
 
         const double *coeff_ptr = eprec->record + offset + (i * numeber_coefficients_per_component);
         result[i] = chebyshev_evaluate(tau, coeff_ptr, numeber_coefficients_per_component);
+    }
+
+    // store in cache
+    if (target_idx >= 0 && target_idx < EPH_CACHE_SLOTS) {
+        map->cache_jd[target_idx] = jd_epoch;
+        map->cache_pos[target_idx][0] = result[0];
+        map->cache_pos[target_idx][1] = result[1];
+        map->cache_pos[target_idx][2] = result[2];
+        map->cache_valid[target_idx] = 1;
     }
 
     return 1;
@@ -462,6 +480,8 @@ int spody_setup_MappedEphemeris(MappedEphemeris *map, const char *filename){
 
     int returnNumber =  ephemeris_map_file(map, filename);
 
+    for (int i = 0; i < EPH_CACHE_SLOTS; i++) map->cache_valid[i] = 0;
+
     if (map->header->start_epoch != map->records[0]->start_epoch){
         printf("!It is a subset!\n");
         printf("Header and ephemeris file have different start epoch.\n");
@@ -565,6 +585,33 @@ int spody_get_ephposition(MappedEphemeris *map, int central_idx, int target_idx,
     result[0] -= central[0];
     result[1] -= central[1];
     result[2] -= central[2];
+    return 0;
+}
+
+int spody_get_ephposition_batch(MappedEphemeris *map, int central_idx, const int *target_idx_array, int n_targets, double jd_epoch, double (*result)[3]){
+    // Central body is SSB-reduced once; all targets reuse it.
+    // Further deduplication (e.g. EMB+Moon_geo shared across Earth/Moon requests)
+    // is handled automatically by the per-body cache in calculate_body_position.
+    double central[3];
+    if (get_body_position_ssb(map, central_idx, jd_epoch, central) < 0) {
+        printf("Central body not supported\n");
+        for (int i = 0; i < n_targets; i++) {
+            result[i][0] = 0.0; result[i][1] = 0.0; result[i][2] = 0.0;
+        }
+        return -1;
+    }
+
+    for (int i = 0; i < n_targets; i++) {
+        double target_ssb[3];
+        if (get_body_position_ssb(map, target_idx_array[i], jd_epoch, target_ssb) < 0) {
+            printf("Target body %d not supported\n", target_idx_array[i]);
+            result[i][0] = 0.0; result[i][1] = 0.0; result[i][2] = 0.0;
+            continue;
+        }
+        result[i][0] = target_ssb[0] - central[0];
+        result[i][1] = target_ssb[1] - central[1];
+        result[i][2] = target_ssb[2] - central[2];
+    }
     return 0;
 }
 
@@ -675,6 +722,8 @@ int spody_setup_partialMappedEphemeris(MappedEphemeris *map, const char *filenam
 
     map->header = malloc(sizeof(EphemerisFile_Header));
     *map->header = *full.header;
+
+    for (int i = 0; i < EPH_CACHE_SLOTS; i++) map->cache_valid[i] = 0;
 
     map->records = (EphemerisFile_Record**)malloc(sizeof(EphemerisFile_Record*) * number_of_records); // * map->header->bytes_per_record
     if (!map->records) return -3; //malloc error
