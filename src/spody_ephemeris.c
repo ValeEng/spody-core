@@ -478,117 +478,94 @@ int spody_setup_MappedEphemeris(MappedEphemeris *map, const char *filename){
     return returnNumber;
 }
 
-int spody_get_ephposition(MappedEphemeris *map, int central_idx ,int target_idx, double jd_epoch, double result[3]){
-
 /*****************NAIF ID********************
+    SSB     = 0
+    MERCURY = 1 or 199
+    VENUS   = 2 or 299
+    EMB     = 3
+    MARS    = 4 or 499
+    JUPITER = 5 or 599
+    SATURN  = 6 or 699
+    URANUS  = 7 or 799
+    NEPTUNE = 8 or 899
+    PLUTO   = 9 or 999
     SUN     = 10
-    EARTH   = 399
     MOON    = 301
+    EARTH   = 399
+    (planet barycenter and planet center collapse to the same record in DE440
+     except for Earth/Moon, handled explicitly via EMRAT)
 ********************************************/
 
-    //central_idx and target_idx are naif code 
-    int returnNumber;
-    double temp[3]={0.0};
-    
-    /*
-    int central_body, target_body;
-
-    if (strstr(central_idx, "Earth")||strstr(central_idx, "earth")||strstr(central_idx, "EARTH") ){ 
-        central_body = 399; //Earth Barycenter
-    }else if (strstr(central_idx, "Moon")||strstr(central_idx, "moon")||strstr(central_idx, "MOON") ){ 
-        central_body = 301; //Moon
+static int get_body_position_ssb(MappedEphemeris *map, int naif_id, double jd_epoch, double result[3]){
+    double temp[3];
+    switch (naif_id) {
+    case 0:
+        result[0] = 0.0; result[1] = 0.0; result[2] = 0.0;
+        return 0;
+    case 1: case 199: return calculate_body_position(map, 0,  jd_epoch, result);
+    case 2: case 299: return calculate_body_position(map, 1,  jd_epoch, result);
+    case 3:           return calculate_body_position(map, 2,  jd_epoch, result);
+    case 4: case 499: return calculate_body_position(map, 3,  jd_epoch, result);
+    case 5: case 599: return calculate_body_position(map, 4,  jd_epoch, result);
+    case 6: case 699: return calculate_body_position(map, 5,  jd_epoch, result);
+    case 7: case 799: return calculate_body_position(map, 6,  jd_epoch, result);
+    case 8: case 899: return calculate_body_position(map, 7,  jd_epoch, result);
+    case 9: case 999: return calculate_body_position(map, 8,  jd_epoch, result);
+    case 10:          return calculate_body_position(map, 10, jd_epoch, result);
+    case 399: {
+        // Earth_ssb = EMB_ssb - 1/(1+EMRAT) * r_moon_earth
+        calculate_body_position(map, 2, jd_epoch, result);
+        calculate_body_position(map, 9, jd_epoch, temp);
+        double f = -1.0 / (1.0 + EMRAT);
+        result[0] += f * temp[0];
+        result[1] += f * temp[1];
+        result[2] += f * temp[2];
+        return 1;
     }
-    
-    if (strstr(target_body, "Earth")||strstr(target_body, "earth")||strstr(target_body, "EARTH") ){ 
-        target_body = 399; //Earth Barycenter
-    }else if (strstr(central_idx, "Moon")||strstr(target_body, "moon")||strstr(target_body, "MOON") ){ 
-        target_body = 301; //Moon
-    }else if (strstr(central_idx, "Sun")||strstr(target_body, "sun")||strstr(target_body, "SUN") ){ 
-        target_body = 10; //Moon
+    case 301: {
+        // Moon_ssb = EMB_ssb + EMRAT/(1+EMRAT) * r_moon_earth
+        calculate_body_position(map, 2, jd_epoch, result);
+        calculate_body_position(map, 9, jd_epoch, temp);
+        double f = EMRAT / (1.0 + EMRAT);
+        result[0] += f * temp[0];
+        result[1] += f * temp[1];
+        result[2] += f * temp[2];
+        return 1;
     }
-    */
-
-    switch (central_idx)
-    {
-    case 399:
-        
-        switch (target_idx)
-        {
-        case 301:
-            returnNumber = calculate_body_position(map, 9, jd_epoch, result); //TBD parse the arrey of bodies to find the correct id of the map
-            return 0;
-        case 10:
-            returnNumber = calculate_body_position(map, 9, jd_epoch, result); //earth-moon distance
-            //earth distance from earth-moon barycenter
-            result[0] = -(1/(1+EMRAT)) * result[0];
-            result[1] = -(1/(1+EMRAT)) * result[1];
-            result[2] = -(1/(1+EMRAT)) * result[2];
-
-            returnNumber = calculate_body_position(map, 2, jd_epoch, temp); //erth-moon barycenter to solar system barycenter
-            //earth distance from solar system barycenter 
-            result[0] = result[0] + temp[0];
-            result[1] = result[1] + temp[1];
-            result[2] = result[2] + temp[2];
-
-            returnNumber = calculate_body_position(map, 10, jd_epoch, temp); //sun from solar system barycenter
-            result[0] = temp[0] - result[0];
-            result[1] = temp[1] - result[1];
-            result[2] = temp[2] - result[2];
-            return 0;        
-        default:
-            printf("Target body not supported");
-            result[0] = 0.0;
-            result[1] = 0.0;
-            result[2] = 0.0;
-            return -1; // out from the switch 
-        } 
-
-        break;
-    case 301:
-
-        switch (target_idx)
-        {
-        case 399:
-            returnNumber = calculate_body_position(map, 9, jd_epoch, result); //TBD parse the arrey of bodies to find the correct id of the map
-            result[0] = -result[0];
-            result[1] = -result[1];
-            result[2] = -result[2];
-            return 0;
-        case 10: //TBD
-            returnNumber = calculate_body_position(map, 9, jd_epoch, result); //earth-moon distance
-            //earth distance from earth-moon barycenter
-            result[0] = -MOON_MU / (EARTH_MU + MOON_MU) * result[0];
-            result[1] = -MOON_MU / (EARTH_MU + MOON_MU) * result[1];
-            result[2] = -MOON_MU / (EARTH_MU + MOON_MU) * result[2];
-
-            returnNumber = calculate_body_position(map, 2, jd_epoch, temp); //erth-moon barycenter to solar system barycenter
-            result[0] = result[0] + temp[0];
-            result[1] = result[1] + temp[1];
-            result[2] = result[2] + temp[2];
-
-            returnNumber = calculate_body_position(map, 10, jd_epoch, temp); //sun from solar system barycenter
-            result[0] = temp[0] - result[0];
-            result[1] = temp[1] - result[1];
-            result[2] = temp[2] - result[2];
-            return 0;        
-        default:
-            result[0] = 0.0;
-            result[1] = 0.0;
-            result[2] = 0.0;
-            return -1; // out from the switch 
-        }
-
-        break;
     default:
-        printf("Target body not supported");
-        result[0] = 0.0;
-        result[1] = 0.0;
-        result[2] = 0.0;
-        return -1; // out from the switch 
+        result[0] = 0.0; result[1] = 0.0; result[2] = 0.0;
+        return -1;
+    }
+}
+
+int spody_get_ephposition(MappedEphemeris *map, int central_idx, int target_idx, double jd_epoch, double result[3]){
+
+    // fast path: Earth <-> Moon uses a single Chebyshev evaluation
+    if (central_idx == 399 && target_idx == 301) {
+        return calculate_body_position(map, 9, jd_epoch, result);
+    }
+    if (central_idx == 301 && target_idx == 399) {
+        calculate_body_position(map, 9, jd_epoch, result);
+        result[0] = -result[0];
+        result[1] = -result[1];
+        result[2] = -result[2];
+        return 0;
     }
 
-    printf("Central body not supported");
-    return -2; // function starting error
+    double central[3];
+    if (get_body_position_ssb(map, target_idx, jd_epoch, result) < 0) {
+        printf("Target body not supported\n");
+        return -1;
+    }
+    if (get_body_position_ssb(map, central_idx, jd_epoch, central) < 0) {
+        printf("Central body not supported\n");
+        result[0] = 0.0; result[1] = 0.0; result[2] = 0.0;
+        return -1;
+    }
+    result[0] -= central[0];
+    result[1] -= central[1];
+    result[2] -= central[2];
+    return 0;
 }
 
 int spody_get_lunarlibrationangles(MappedEphemeris *map, double jd_epoch, double result[3]){

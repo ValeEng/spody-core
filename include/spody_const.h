@@ -20,11 +20,30 @@
 extern "C" {
 #endif
 
-   // Constants
-#define PI 3.14159265358979323846264338327950288419716939937511
 
-   // Conversion units
+    // Constants
+#define JD_JAN_2000 2451545.0 // Julian Date at J2000 epoch
+#define PI 3.14159265358979323846264338327950288419716939937511
+#define SOLAR_LUMINOSITY_4PIC 1.016111489628894e+08 // Watts divided 4pi*c*10^9 | we can use r in km and am in m^2/kg 
+
+
+    //Radiation pressure coefficients (from Montenbruck and Gill)
+#define CR_ALUMINUM_COATED_MYLAR 1.88 
+#define CR_SOLARPANEL 1.21
+#define CR_ALUMNINUM 1.31
+
+
+    // Conversion units
 #define SECONDSxDAY 86400 
+#define KM2M 1000.0
+#define M2KM 0.001
+#define M2AU 6.684587122268445e-12
+#define AU2M 149597870700
+#define KM2AU 6.684587122268445e-9
+#define AU2KM 149597870.7
+#define DEG2RAD (PI/180.0)
+#define RAD2DEG (180.0/PI)
+
 
     //gravitational parameters KM^3/s^2
 #define EARTH_MU 398600.4415 //398600.435507 //KM -->//(GRAV_CONST * EARTH_MASS) // m^3 s^-2
