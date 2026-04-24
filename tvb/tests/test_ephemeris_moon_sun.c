@@ -89,7 +89,7 @@ int main(int argc, char **argv) {
 
     // 6. batch API must agree with single-call API (bit-identical)
     int targets[] = {10, 399, 5, 6};
-    double batch_result[4][3];
+    double batch_result[12]; // flat: 4 targets * 3 components
     spody_get_ephposition_batch(&map, 301, targets, 4, jd, batch_result);
     double ref[4][3];
     spody_get_ephposition(&map, 301, 10,  jd, ref[0]);
@@ -98,7 +98,7 @@ int main(int argc, char **argv) {
     spody_get_ephposition(&map, 301, 6,   jd, ref[3]);
     for (int t = 0; t < 4; t++) {
         for (int i = 0; i < 3; i++) {
-            double err = fabs(batch_result[t][i] - ref[t][i]);
+            double err = fabs(batch_result[3*t + i] - ref[t][i]);
             if (err > 1e-6) {
                 printf("FAIL: batch vs single differ on target[%d] comp %d by %.6e km\n",
                        t, i, err);

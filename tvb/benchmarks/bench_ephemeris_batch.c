@@ -74,13 +74,13 @@ int main(int argc, char **argv) {
 
     /* -------- Scenario C: batch API, cache on -------- */
     invalidate_cache(&map);
-    double rb[4][3];
+    double rb[12]; // flat buffer: 4 targets * 3 components
     t0 = now_ms();
     for (int k = 0; k < N_DATES; k++) {
         double jd = jd_start + k * jd_step;
         spody_get_ephposition_batch(&map, 301, targets, n_targets, jd, rb);
-        for (int t = 0; t < n_targets; t++) {
-            sink += rb[t][0] + rb[t][1] + rb[t][2];
+        for (int i = 0; i < 3 * n_targets; i++) {
+            sink += rb[i];
         }
     }
     tC = now_ms() - t0;

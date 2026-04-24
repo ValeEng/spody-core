@@ -588,29 +588,29 @@ int spody_get_ephposition(MappedEphemeris *map, int central_idx, int target_idx,
     return 0;
 }
 
-int spody_get_ephposition_batch(MappedEphemeris *map, int central_idx, const int *target_idx_array, int n_targets, double jd_epoch, double (*result)[3]){
+int spody_get_ephposition_batch(MappedEphemeris *map, int central_idx, const int *target_idx_array, int n_targets, double jd_epoch, double *result){
+    // Flat buffer layout: result[3*i + 0..2] is (x,y,z) for target i.
     // Central body is SSB-reduced once; all targets reuse it.
     // Further deduplication (e.g. EMB+Moon_geo shared across Earth/Moon requests)
     // is handled automatically by the per-body cache in calculate_body_position.
     double central[3];
     if (get_body_position_ssb(map, central_idx, jd_epoch, central) < 0) {
         printf("Central body not supported\n");
-        for (int i = 0; i < n_targets; i++) {
-            result[i][0] = 0.0; result[i][1] = 0.0; result[i][2] = 0.0;
-        }
+        for (int i = 0; i < 3 * n_targets; i++) result[i] = 0.0;
         return -1;
     }
 
     for (int i = 0; i < n_targets; i++) {
         double target_ssb[3];
+        double *out = result + 3 * i;
         if (get_body_position_ssb(map, target_idx_array[i], jd_epoch, target_ssb) < 0) {
             printf("Target body %d not supported\n", target_idx_array[i]);
-            result[i][0] = 0.0; result[i][1] = 0.0; result[i][2] = 0.0;
+            out[0] = 0.0; out[1] = 0.0; out[2] = 0.0;
             continue;
         }
-        result[i][0] = target_ssb[0] - central[0];
-        result[i][1] = target_ssb[1] - central[1];
-        result[i][2] = target_ssb[2] - central[2];
+        out[0] = target_ssb[0] - central[0];
+        out[1] = target_ssb[1] - central[1];
+        out[2] = target_ssb[2] - central[2];
     }
     return 0;
 }

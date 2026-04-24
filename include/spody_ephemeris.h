@@ -89,7 +89,9 @@ int spody_createfile_MappedEphemeris(const char *path, const char **file_names, 
 int spody_setup_MappedEphemeris(MappedEphemeris *map, const char *filename);
 int spody_setup_partialMappedEphemeris(MappedEphemeris *map, const char *filename, double in_start, double in_end);
 int spody_get_ephposition(MappedEphemeris *map, int central_idx ,int target_idx, double jd_epoch, double result[3]);
-int spody_get_ephposition_batch(MappedEphemeris *map, int central_idx, const int *target_idx_array, int n_targets, double jd_epoch, double (*result)[3]);
+/* Batch query: writes n_targets positions into a flat buffer of 3*n_targets
+ * doubles, laid out as [x0,y0,z0, x1,y1,z1, ...]. Caller owns the buffer. */
+int spody_get_ephposition_batch(MappedEphemeris *map, int central_idx, const int *target_idx_array, int n_targets, double jd_epoch, double *result);
 int spody_get_lunarlibrationangles(MappedEphemeris *map, double jd_epoch, double result[3]);
     
 /* ICRF (J2000) -> Lunar body-fixed (PA frame)
