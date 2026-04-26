@@ -27,14 +27,19 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    MappedEphemerisData med = {0};
+    if (spody_setup_MappedEphemerisData(&med, argv[1]) != 0) {
+        printf("failed to setup ephemeris data\n");
+        return 1;
+    }
     MappedEphemeris map = {0};
-    if (spody_setup_MappedEphemeris(&map, argv[1]) != 0) {
-        printf("failed to setup ephemeris\n");
+    if (spody_setup_MappedEphemeris(&map, &med) != 0) {
+        printf("failed to setup ephemeris map\n");
         return 1;
     }
 
     // pick a safe JD window well inside the file
-    double jd_start = map.header->start_epoch + 100.0;
+    double jd_start = med.header->start_epoch + 100.0;
     double jd_step  = 1.0;
 
     // from Moon: Sun, Earth, Jupiter, Saturn

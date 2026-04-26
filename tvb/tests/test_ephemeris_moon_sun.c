@@ -21,14 +21,19 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    MappedEphemerisData med = {0};
+    if (spody_setup_MappedEphemerisData(&med, argv[1]) != 0) {
+        printf("FAIL: setup data\n");
+        return 1;
+    }
     MappedEphemeris map = {0};
-    if (spody_setup_MappedEphemeris(&map, argv[1]) != 0) {
-        printf("FAIL: setup\n");
+    if (spody_setup_MappedEphemeris(&map, &med) != 0) {
+        printf("FAIL: setup map\n");
         return 1;
     }
 
     // some JD well inside the file
-    double jd = map.header->start_epoch + 100.0;
+    double jd = med.header->start_epoch + 100.0;
 
     double earth_sun[3], moon_sun[3], earth_moon[3], moon_earth[3];
     spody_get_ephposition(&map, 399, 10,  jd, earth_sun);

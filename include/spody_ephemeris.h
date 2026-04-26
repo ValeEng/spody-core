@@ -73,22 +73,42 @@ typedef struct {
     double record[];
 }EphemerisFile_Record;
 
+/* Shared, read-only ephemeris data: header and records point into the
+ * memory-mapped file (or, for the partial setup, into private heap copies)
+ * and are not mutated by query calls. A single MappedEphemerisData can be
+ * safely shared across threads. */
 typedef struct {
     MappedFile mf;
     EphemerisFile_Header *header;
     EphemerisFile_Record **records;
     size_t num_records;
-    // single-shot cache per DE440 body index: if the same (idx, jd_epoch)
-    // is requested again, return the cached position without re-evaluating Chebyshev.
+} MappedEphemerisData;
+
+/* Per-thread query handle: holds a pointer to the shared (read-only)
+ * MappedEphemerisData plus a private single-shot cache keyed by DE440
+ * body index. If the same (idx, jd_epoch) is requested again on the same
+ * handle, the cached position is returned without re-evaluating Chebyshev.
+ *
+ * Threading model:
+ *   - Setup the MappedEphemerisData once (e.g. on the main thread).
+ *   - Each worker thread declares its own MappedEphemeris bound to that
+ *     shared MappedEphemerisData and calls the query functions with it.
+ *   - Never share the same MappedEphemeris across threads. */
+typedef struct {
+    MappedEphemerisData *med;
     double cache_jd[EPH_CACHE_SLOTS];
     double cache_pos[EPH_CACHE_SLOTS][3];
     int cache_valid[EPH_CACHE_SLOTS];
 } MappedEphemeris;
 
-int spody_createfile_MappedEphemeris(const char *path, const char **file_names, const int n_files, const char *de);
-int spody_setup_MappedEphemeris(MappedEphemeris *map, const char *filename);
-int spody_setup_partialMappedEphemeris(MappedEphemeris *map, const char *filename, double in_start, double in_end);
-int spody_get_ephposition(MappedEphemeris *map, int central_idx ,int target_idx, double jd_epoch, double result[3]);
+int spody_createfile_MappedEphemerisData(const char *path, const char **file_names, const int n_files, const char *de);
+int spody_setup_MappedEphemerisData(MappedEphemerisData *med, const char *filename);
+int spody_setup_partialMappedEphemerisData(MappedEphemerisData *med, const char *filename, double in_start, double in_end);
+int spody_setup_MappedEphemeris(MappedEphemeris *map, MappedEphemerisData *med);
+int spody_free_MappedEphemeris(MappedEphemeris *map);
+int spody_free_MappedEphemerisData(MappedEphemerisData *med);
+
+int spody_get_ephposition(MappedEphemeris *map, int central_idx, int target_idx, double jd_epoch, double result[3]);
 /* Batch query: writes n_targets positions into a flat buffer of 3*n_targets
  * doubles, laid out as [x0,y0,z0, x1,y1,z1, ...]. Caller owns the buffer. */
 int spody_get_ephposition_batch(MappedEphemeris *map, int central_idx, const int *target_idx_array, int n_targets, double jd_epoch, double *result);

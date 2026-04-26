@@ -290,34 +290,36 @@ static int calculate_body_position(MappedEphemeris *map, int target_idx, double 
         return 1;
     }
 
+    MappedEphemerisData *med = map->med;
+
     #if DEBUG_EPHEMERIS == 1
     printf("\n");
     for(int i=0;i<15;i++){
-        printf("bodies mapped idx %02d | location %04d | n coeff per comp %02d | n sets per record %d\n", i+1, map->header->location[i], map->header->number_coefficients_per_component[i], map->header->number_complete_sets_coefficients_per_record[i]);
+        printf("bodies mapped idx %02d | location %04d | n coeff per comp %02d | n sets per record %d\n", i+1, med->header->location[i], med->header->number_coefficients_per_component[i], med->header->number_complete_sets_coefficients_per_record[i]);
     }
     #endif
 
     // 1. Retrieve body parameters
-    int numeber_coefficients_per_component = map->header->number_coefficients_per_component[target_idx];
-    int start_index = map->header->location[target_idx] - 1; // 1-based -> 0-based
+    int numeber_coefficients_per_component = med->header->number_coefficients_per_component[target_idx];
+    int start_index = med->header->location[target_idx] - 1; // 1-based -> 0-based
     int n_components = 3; // X, Y, Z <--- not to flexible!!!!
 
-    // 2. Subdivision identification 
-    int record_id = (int)floor((jd_epoch - map->header->start_epoch)/map->header->days_per_record);
+    // 2. Subdivision identification
+    int record_id = (int)floor((jd_epoch - med->header->start_epoch)/med->header->days_per_record);
     //printf("Record ID calc: %d\n", record_id);
-    EphemerisFile_Record *eprec = map->records[record_id];
+    EphemerisFile_Record *eprec = med->records[record_id];
     double block_duration = eprec->end_epoch - eprec->start_epoch;
-    double set_duration = block_duration / map->header->number_complete_sets_coefficients_per_record[target_idx];
-    int set_id = (int)floor((jd_epoch - eprec->start_epoch) / set_duration); //wich subdivision we need 
-    
+    double set_duration = block_duration / med->header->number_complete_sets_coefficients_per_record[target_idx];
+    int set_id = (int)floor((jd_epoch - eprec->start_epoch) / set_duration); //wich subdivision we need
+
     #if DEBUG_EPHEMERIS == 1
-    printf("Record ID: %d | Start epoch header: %f | start epoch record [%d]: %f | JD epoch now : %f \n", record_id, map->header->start_epoch, record_id, map->records[record_id]->start_epoch, jd_epoch);
+    printf("Record ID: %d | Start epoch header: %f | start epoch record [%d]: %f | JD epoch now : %f \n", record_id, med->header->start_epoch, record_id, med->records[record_id]->start_epoch, jd_epoch);
     printf("Set ID: %d\n", set_id);
     #endif
 
-    // floating point error check 
-    if (set_id >= map->header->number_complete_sets_coefficients_per_record[target_idx]) {
-        set_id = map->header->number_complete_sets_coefficients_per_record[target_idx] - 1;
+    // floating point error check
+    if (set_id >= med->header->number_complete_sets_coefficients_per_record[target_idx]) {
+        set_id = med->header->number_complete_sets_coefficients_per_record[target_idx] - 1;
         printf("Adjusted Set ID due to floating point error: %d\n", set_id);
     }  // we can do this because jd_epoch <= t_end
 
@@ -367,45 +369,45 @@ static int calculate_body_position(MappedEphemeris *map, int target_idx, double 
     return 1;
 }
 
-//MAPPING FUNCTIONS--------------------------------------------------------------------------------------------------   
+//MAPPING FUNCTIONS--------------------------------------------------------------------------------------------------
 
-static int ephemeris_map_file(MappedEphemeris *map, const char *filename) {
-    
-    if (!map) return -1; //if NULL exit
+static int ephemeris_map_file(MappedEphemerisData *med, const char *filename) {
 
-    if (mf_map_file(&map->mf, filename) != 0) return -2; //mapping error
+    if (!med) return -1; //if NULL exit
 
-    map->header = (EphemerisFile_Header*)map->mf.ptr;
-    //printf("Mapped header start epoch: %.6f\n", map->header->start_epoch);
-    //printf("Mapped header end epoch: %.6f\n", map->header->end_epoch);
-    //printf("bytes per record: %d\n", map->header->bytes_per_record);
+    if (mf_map_file(&med->mf, filename) != 0) return -2; //mapping error
 
-    printf("mf_size : %zu\n",map->mf.size);
+    med->header = (EphemerisFile_Header*)med->mf.ptr;
+    //printf("Mapped header start epoch: %.6f\n", med->header->start_epoch);
+    //printf("Mapped header end epoch: %.6f\n", med->header->end_epoch);
+    //printf("bytes per record: %d\n", med->header->bytes_per_record);
+
+    printf("mf_size : %zu\n",med->mf.size);
     printf("sizeof(EphemerisFile_Header) : %zu\n",sizeof(EphemerisFile_Header));
 
-    size_t remaining_bytes = map->mf.size - sizeof(EphemerisFile_Header);
+    size_t remaining_bytes = med->mf.size - sizeof(EphemerisFile_Header);
     printf("remaning bytes : %zu \n",remaining_bytes);
-    
 
 
-    map->num_records = remaining_bytes / map->header->bytes_per_record; //we hope it is exact division
-    
+
+    med->num_records = remaining_bytes / med->header->bytes_per_record; //we hope it is exact division
+
     #if DEBUG_EPHEMERIS == 1
-    printf("bytes per record: %d\n", map->header->bytes_per_record);
-    printf("Number of records mapped: %zu\n", map->num_records);
+    printf("bytes per record: %d\n", med->header->bytes_per_record);
+    printf("Number of records mapped: %zu\n", med->num_records);
     #endif
 
-    map->records = (EphemerisFile_Record**)malloc(sizeof(EphemerisFile_Record*) * map->num_records); // * map->header->bytes_per_record
-    if (!map->records) return -3; //malloc error
+    med->records = (EphemerisFile_Record**)malloc(sizeof(EphemerisFile_Record*) * med->num_records);
+    if (!med->records) return -3; //malloc error
 
-    uint8_t *ptr = (uint8_t*)map->mf.ptr + sizeof(EphemerisFile_Header); //work on bytes 
-    for (size_t i = 0; i < map->num_records; i++) {
+    uint8_t *ptr = (uint8_t*)med->mf.ptr + sizeof(EphemerisFile_Header); //work on bytes
+    for (size_t i = 0; i < med->num_records; i++) {
         //printf("Mapping record %zu at address %p\n", i, ptr);
-        map->records[i] = (EphemerisFile_Record*)ptr;
+        med->records[i] = (EphemerisFile_Record*)ptr;
         #if DEBUG_EPHEMERIS == 1
-        printf("Mapped record %zu: record number %d, n_coeff %d, start_epoch %.6f, end_epoch %.6f\n", i+1, map->records[i]->record_number, map->records[i]->number_coefficients_per_record, map->records[i]->start_epoch, map->records[i]->end_epoch);
+        printf("Mapped record %zu: record number %d, n_coeff %d, start_epoch %.6f, end_epoch %.6f\n", i+1, med->records[i]->record_number, med->records[i]->number_coefficients_per_record, med->records[i]->start_epoch, med->records[i]->end_epoch);
         #endif
-        size_t record_bytes = map->header->bytes_per_record; //(sizeof(EphemerisFile_Record) + map->records[i]->number_coefficients_per_record * sizeof(double));
+        size_t record_bytes = med->header->bytes_per_record;
         //printf("record_bytes : %zu\n",record_bytes);
         ptr += record_bytes;
     }
@@ -413,18 +415,18 @@ static int ephemeris_map_file(MappedEphemeris *map, const char *filename) {
     return 0;
 }
 
-static int ephemeris_unmap_file(MappedEphemeris *map) {
-    if (!map) return -1;
+static int ephemeris_unmap_file(MappedEphemerisData *med) {
+    if (!med) return -1;
 
-    free(map->records);
-    map->records = NULL;
-    map->header = NULL;
-    map->num_records = 0;
+    free(med->records);
+    med->records = NULL;
+    med->header = NULL;
+    med->num_records = 0;
 
-    return mf_unmap_file(&map->mf);
+    return mf_unmap_file(&med->mf);
 }
 
-int spody_createfile_MappedEphemeris(const char *path, const char **file_names, const int n_files, const char *de){
+int spody_createfile_MappedEphemerisData(const char *path, const char **file_names, const int n_files, const char *de){
     
     char header_path[1000]; //TBD 
     char bin_filename[1000];
@@ -476,26 +478,42 @@ int spody_createfile_MappedEphemeris(const char *path, const char **file_names, 
 
 }
 
-int spody_setup_MappedEphemeris(MappedEphemeris *map, const char *filename){
+int spody_setup_MappedEphemerisData(MappedEphemerisData *med, const char *filename){
 
-    int returnNumber =  ephemeris_map_file(map, filename);
+    int returnNumber =  ephemeris_map_file(med, filename);
 
-    for (int i = 0; i < EPH_CACHE_SLOTS; i++) map->cache_valid[i] = 0;
-
-    if (map->header->start_epoch != map->records[0]->start_epoch){
+    if (med->header->start_epoch != med->records[0]->start_epoch){
         printf("!It is a subset!\n");
         printf("Header and ephemeris file have different start epoch.\n");
         printf("Change header start epoch to the subset JD start.\n");
-        map->header->start_epoch = map->records[0]->start_epoch;
+        med->header->start_epoch = med->records[0]->start_epoch;
     }
-    if (map->header->end_epoch != map->records[map->num_records-1]->end_epoch){
+    if (med->header->end_epoch != med->records[med->num_records-1]->end_epoch){
         printf("!It is a subset!\n");
         printf("Header and ephemeris file have different end epoch.\n");
         printf("Change header end epoch to the subset JD end.\n");
-        map->header->end_epoch = map->records[map->num_records-1]->end_epoch;
+        med->header->end_epoch = med->records[med->num_records-1]->end_epoch;
     }
 
     return returnNumber;
+}
+
+int spody_setup_MappedEphemeris(MappedEphemeris *map, MappedEphemerisData *med){
+    if (!map || !med) return -1;
+    map->med = med;
+    for (int i = 0; i < EPH_CACHE_SLOTS; i++) map->cache_valid[i] = 0;
+    return 0;
+}
+
+int spody_free_MappedEphemeris(MappedEphemeris *map){
+    if (!map) return -1;
+    map->med = NULL;
+    for (int i = 0; i < EPH_CACHE_SLOTS; i++) map->cache_valid[i] = 0;
+    return 0;
+}
+
+int spody_free_MappedEphemerisData(MappedEphemerisData *med){
+    return ephemeris_unmap_file(med);
 }
 
 /*****************NAIF ID********************
@@ -705,56 +723,53 @@ int spody_setup_partialMappedEphemeris(MappedEphemeris *map, const char *filenam
 }
 */
 
-int spody_setup_partialMappedEphemeris(MappedEphemeris *map, const char *filename, double in_start, double in_end){
+int spody_setup_partialMappedEphemerisData(MappedEphemerisData *med, const char *filename, double in_start, double in_end){
 
     //TBD necessary a free function but now we end the program for memory free
 
-    MappedEphemeris full = {0};
+    MappedEphemerisData full = {0};
     if (ephemeris_map_file(&full, filename) != 0) return -1;
 
     int record_id_start = (int)floor((in_start - full.header->start_epoch)/full.header->days_per_record);
     int record_id_end = (int)floor((in_end - full.header->start_epoch)/full.header->days_per_record);
-    int number_of_records = (record_id_end - record_id_start) + 1; // is alway + 1 wrt the difference 
+    int number_of_records = (record_id_end - record_id_start) + 1; // is alway + 1 wrt the difference
     if (number_of_records <= 0) return -4;
 
     printf("start : %.6f | end : %.6f\n", in_start, in_end);
     printf("record_id_start : %d | record_id_end : %d \nnumber_of_reccords : %d\n", record_id_start, record_id_end, number_of_records);
 
-    map->header = malloc(sizeof(EphemerisFile_Header));
-    *map->header = *full.header;
+    med->header = malloc(sizeof(EphemerisFile_Header));
+    *med->header = *full.header;
 
-    for (int i = 0; i < EPH_CACHE_SLOTS; i++) map->cache_valid[i] = 0;
-
-    map->records = (EphemerisFile_Record**)malloc(sizeof(EphemerisFile_Record*) * number_of_records); // * map->header->bytes_per_record
-    if (!map->records) return -3; //malloc error
+    med->records = (EphemerisFile_Record**)malloc(sizeof(EphemerisFile_Record*) * number_of_records);
+    if (!med->records) return -3; //malloc error
 
     for(int i = 0; i < number_of_records; i++ ) {
-        //map->records[i] = full.records[ i + record_id_start ];
-        size_t sz = map->header->bytes_per_record;
-        map->records[i] = malloc(sz);
-        memcpy(map->records[i], full.records[record_id_start + i], sz);
-        printf("record start epoch : %.6f",map->records[i]->start_epoch);
-        map->records[i]->start_epoch -= in_start; 
-        map->records[i]->start_epoch *= SECONDSxDAY; 
-        printf("record start epoch : %.6f ",map->records[i]->end_epoch);
-        map->records[i]->end_epoch -= in_start; 
-        map->records[i]->end_epoch *= SECONDSxDAY; 
+        size_t sz = med->header->bytes_per_record;
+        med->records[i] = malloc(sz);
+        memcpy(med->records[i], full.records[record_id_start + i], sz);
+        printf("record start epoch : %.6f",med->records[i]->start_epoch);
+        med->records[i]->start_epoch -= in_start;
+        med->records[i]->start_epoch *= SECONDSxDAY;
+        printf("record start epoch : %.6f ",med->records[i]->end_epoch);
+        med->records[i]->end_epoch -= in_start;
+        med->records[i]->end_epoch *= SECONDSxDAY;
 
         printf("%zu bytes copied\n",sz);
     }
-    
-    map->num_records = number_of_records;
-    map->header->days_per_record *= SECONDSxDAY ; //now we are working with seconds 
-    map->header->start_epoch = map->records[0]->start_epoch;
-    map->header->end_epoch = map->records[ map->num_records - 1 ]->end_epoch;
 
-    printf("map->header->days_per_record (seconds_per_record) : %d\n",map->header->days_per_record);
-    printf("map->num_records : %zu \nmap->header->start_epoch : %f | map->records[0]->start_epoch : %f \nmap->header->end_epoch : %f | map->records[map->num_records - 1]->end_epoch : %f\n", map->num_records, map->header->start_epoch, map->records[0]->start_epoch, map->header->end_epoch, map->records[map->num_records - 1]->end_epoch);
-    printf("size of entire allocatedd memory for the map : %zu \n", sizeof(MappedEphemeris) + sizeof(EphemerisFile_Header) + sizeof(EphemerisFile_Record*) * number_of_records + number_of_records * map->header->bytes_per_record);
-    printf("size of map only : %zu\n", sizeof(MappedEphemeris));
+    med->num_records = number_of_records;
+    med->header->days_per_record *= SECONDSxDAY ; //now we are working with seconds
+    med->header->start_epoch = med->records[0]->start_epoch;
+    med->header->end_epoch = med->records[ med->num_records - 1 ]->end_epoch;
+
+    printf("med->header->days_per_record (seconds_per_record) : %d\n",med->header->days_per_record);
+    printf("med->num_records : %zu \nmed->header->start_epoch : %f | med->records[0]->start_epoch : %f \nmed->header->end_epoch : %f | med->records[med->num_records - 1]->end_epoch : %f\n", med->num_records, med->header->start_epoch, med->records[0]->start_epoch, med->header->end_epoch, med->records[med->num_records - 1]->end_epoch);
+    printf("size of entire allocatedd memory for the data : %zu \n", sizeof(MappedEphemerisData) + sizeof(EphemerisFile_Header) + sizeof(EphemerisFile_Record*) * number_of_records + number_of_records * med->header->bytes_per_record);
+    printf("size of data only : %zu\n", sizeof(MappedEphemerisData));
     printf("size of header : %zu\n", sizeof(EphemerisFile_Header));
     printf("size of records pointers array : %zu\n", sizeof(EphemerisFile_Record*) * number_of_records);
-    printf("size of all records stored : %d\n", number_of_records * map->header->bytes_per_record);
+    printf("size of all records stored : %d\n", number_of_records * med->header->bytes_per_record);
     ephemeris_unmap_file(&full);
 
 

@@ -17,7 +17,7 @@ raw_data/
 
 ## DE440 — JPL Planetary Ephemeris
 
-Used by: `spody_ephemeris` module (`spody_setup_MappedEphemeris`, `spody_get_position`, `spody_get_lunarlibrationangles`)
+Used by: `spody_ephemeris` module (`spody_setup_MappedEphemerisData`, `spody_setup_MappedEphemeris`, `spody_get_ephposition`, `spody_get_lunarlibrationangles`)
 
 ### 1. Download the ASCII files
 
@@ -59,19 +59,30 @@ const char *dates[]  = {"01550","01650","01750","01850","01950",
 const int   n_files  = 11;
 
 // Generates: raw_data/DE440/de440.spody
-int ret = spody_createfile_MappedEphemeris(path, dates, n_files, "440");
+int ret = spody_createfile_MappedEphemerisData(path, dates, n_files, "440");
 ```
 
-This writes `de440.spody` into `raw_data/DE440/`. Run it **once** — after that, load the binary directly:
+This writes `de440.spody` into `raw_data/DE440/`. Run it **once** — after that, load the binary directly. The library uses a two-step setup: a shared, read-only `MappedEphemerisData` (one per process) and a per-thread `MappedEphemeris` query handle that holds a private Chebyshev cache.
 
 ```c
+// Setup once (e.g. on the main thread): shared, read-only
+MappedEphemerisData med = {0};
+spody_setup_MappedEphemerisData(&med, "raw_data/DE440/de440.spody");
+
+// Per worker thread: bind a private handle to the shared data
 MappedEphemeris map = {0};
-spody_setup_MappedEphemeris(&map, "raw_data/DE440/de440.spody");
+spody_setup_MappedEphemeris(&map, &med);
 
 // Query Moon position wrt Earth at a given Julian Date
 double position[3];
-spody_get_position(&map, 399, 301, jd_epoch, position);
+spody_get_ephposition(&map, 399, 301, jd_epoch, position);
+
+// Free in reverse order when done
+spody_free_MappedEphemeris(&map);
+spody_free_MappedEphemerisData(&med);
 ```
+
+> **Threading:** the same `MappedEphemerisData` can be safely shared across threads; each thread must own its own `MappedEphemeris`. Never share a `MappedEphemeris` across threads.
 
 **Body index reference (JPL NAIF standard):**
 
