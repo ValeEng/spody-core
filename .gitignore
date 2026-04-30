@@ -59,3 +59,17 @@ add_license_header.ps1
 raw_data/GRGM1200A/gggrx_1200a_sha.lbl
 raw_data/GRGM1200A/gggrx_1200a_sha.tab
 build/
+raw_data/DE440/de440.spody
+raw_data/DE440/ascp01550.440
+raw_data/DE440/ascp01650.440
+raw_data/DE440/ascp01750.440
+raw_data/DE440/ascp01850.440
+raw_data/DE440/ascp01950.440
+raw_data/DE440/ascp02050.440
+raw_data/DE440/ascp02150.440
+raw_data/DE440/ascp02250.440
+raw_data/DE440/ascp02350.440
+raw_data/DE440/ascp02450.440
+raw_data/DE440/ascp02550.440
+raw_data/DE440/header.440
+raw_data/DE440/testpo.440

@@ -77,6 +77,7 @@ set(SOURCES
     src/spody_eclipse.c
     src/spody_ephemeris.c
     src/spody_harmonics.c
+    src/spody_integrators.c
     src/spody_mapping.c
     src/spody_math.c
 )

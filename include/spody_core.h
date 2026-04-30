@@ -24,6 +24,7 @@ extern "C" {
 #include "spody_ephemeris.h"
 #include "spody_harmonics.h"
 #include "spody_eclipse.h"
+#include "spody_integrators.h"
 #include "spody_math.h"
 #include "spody_const.h"
 
