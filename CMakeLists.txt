@@ -45,6 +45,12 @@ option(SPODY_SILENCE_MSVC_CRT_WARNINGS
 option(SPODY_BUILD_TVB
     "Build tests, validations and benchmarks under tvb/" OFF)
 
+option(SPODY_ENABLE_OMP_SIMD
+    "Enable #pragma omp simd hints in inner loops (MSVC: /openmp:experimental, GCC/Clang: -fopenmp-simd)" OFF)
+
+option(SPODY_VEC_REPORT
+    "Emit auto-vectorization diagnostic (MSVC: /Qvec-report:2, GCC/Clang: -fopt-info-vec[-missed])" OFF)
+
 # -----------------------------------------------------------------------------
 # C standard
 # -----------------------------------------------------------------------------
@@ -127,6 +133,21 @@ if(MSVC)
         )
     endif()
 
+    if(SPODY_ENABLE_OMP_SIMD)
+        # /openmp:experimental is the only MSVC flag that recognizes the
+        # #pragma omp simd directive in the front-end. /openmp:llvm controls
+        # only the runtime, not the parser. Note: experimental ignores the
+        # `reduction` clause on simd (warning C4849), so accumulation loops
+        # may not vectorize fully; the column loop still does.
+        target_compile_options(spody_core PRIVATE /openmp:experimental)
+    endif()
+
+    if(SPODY_VEC_REPORT)
+        # /Qvec-report:2 prints which loops were vectorized and which were not
+        # (with reason codes). Visible during the build.
+        target_compile_options(spody_core PRIVATE /Qvec-report:2)
+    endif()
+
 else()
     # ----- GCC / Clang -----
 
@@ -148,6 +169,22 @@ else()
     if(SPODY_FAST_MATH)
         target_compile_options(spody_core PRIVATE
             $<$<CONFIG:Release>:-ffast-math>
+        )
+    endif()
+
+    if(SPODY_ENABLE_OMP_SIMD)
+        # -fopenmp-simd enables #pragma omp simd without the OpenMP runtime
+        # (no libgomp / libomp link, just SIMD pragma support).
+        target_compile_options(spody_core PRIVATE -fopenmp-simd)
+    endif()
+
+    if(SPODY_VEC_REPORT)
+        # GCC: -fopt-info-vec-all emits diagnostics about every vectorization
+        # decision (succeeded and missed) on stderr at compile time.
+        # Clang: -Rpass=vectorize -Rpass-missed=vectorize -Rpass-analysis=loop-vectorize
+        target_compile_options(spody_core PRIVATE
+            $<$<C_COMPILER_ID:GNU>:-fopt-info-vec-all>
+            $<$<C_COMPILER_ID:Clang>:-Rpass=loop-vectorize -Rpass-missed=loop-vectorize -Rpass-analysis=loop-vectorize>
         )
     endif()
 
@@ -208,6 +245,7 @@ message(STATUS "  Build type              : ${CMAKE_BUILD_TYPE}")
 message(STATUS "  Fast math               : ${SPODY_FAST_MATH}")
 message(STATUS "  Whole-program opt       : ${SPODY_WHOLE_PROGRAM_OPT}")
 message(STATUS "  Build TVB               : ${SPODY_BUILD_TVB}")
+message(STATUS "  OMP SIMD pragmas        : ${SPODY_ENABLE_OMP_SIMD}")
 if(MSVC)
     message(STATUS "  Silence MSVC CRT warns  : ${SPODY_SILENCE_MSVC_CRT_WARNINGS}")
 endif()

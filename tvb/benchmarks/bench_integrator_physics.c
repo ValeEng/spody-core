@@ -37,6 +37,8 @@ typedef struct {
     double mu_moon;
 
     HarmonicGravity *hg;        // NULL = no harmonics
+    int use_hpc;                // 0 = call spody_get_hgaccbodyfixed (reference)
+                                // 1 = call spody_get_hgaccbodyfixed_hpc (production)
     MappedEphemeris *eph;       // NULL = no ephemeris-based perturbations
 
     int use_earth_3rd;
@@ -105,7 +107,11 @@ static int orbit_rhs(double t, const double *y, double *dy, void *user) {
 
         double r_pa[3], acc_pa[3], acc_i[3];
         mat_mul_vec(R_i2pa, r, r_pa);
-        spody_get_hgaccbodyfixed(p->hg, r_pa, acc_pa);
+        if (p->use_hpc) {
+            spody_get_hgaccbodyfixed_hpc(p->hg, r_pa, acc_pa);
+        } else {
+            spody_get_hgaccbodyfixed(p->hg, r_pa, acc_pa);
+        }
         mat_mul_vec(R_pa2i, acc_pa, acc_i);
 
         a[0] += acc_i[0];
@@ -284,18 +290,32 @@ int main(int argc, char **argv) {
                 continue;
             }
 
-            OrbitParams p = base;
-            p.eph = &eph_handle;
-            p.hg  = &hg;
-            char label[64];
-            snprintf(label, sizeof(label), "Harmonics N=%d", N);
-            run_scenario(label, &p, y0, t_end);
+            // ref variant
+            {
+                OrbitParams p = base;
+                p.eph = &eph_handle;
+                p.hg  = &hg;
+                p.use_hpc = 0;
+                char label[64];
+                snprintf(label, sizeof(label), "Harmonics N=%d (ref)", N);
+                run_scenario(label, &p, y0, t_end);
+            }
+            // hpc variant
+            {
+                OrbitParams p = base;
+                p.eph = &eph_handle;
+                p.hg  = &hg;
+                p.use_hpc = 1;
+                char label[64];
+                snprintf(label, sizeof(label), "Harmonics N=%d (hpc)", N);
+                run_scenario(label, &p, y0, t_end);
+            }
 
             spody_free_HarmonicGravity(&hg);
             spody_free_HarmonicGravityData(&hgd);
         }
 
-        // Full: harmonics N=100 + 3rd bodies + SRP
+        // Full: harmonics N=100 + 3rd bodies + SRP -- ref + hpc
         {
             int N_full = 100;
             HarmonicGravityData hgd = {0};
@@ -303,15 +323,30 @@ int main(int argc, char **argv) {
             if (spody_load_HarmonicGravityData(&hgd, grav_path, N_full) == 0 &&
                 spody_setup_HarmonicGravity(&hg, &hgd) == 0) {
 
-                OrbitParams p = base;
-                p.eph = &eph_handle;
-                p.hg  = &hg;
-                p.use_earth_3rd = 1;
-                p.use_sun_3rd   = 1;
-                p.srp_AoM_Cr    = CR_ALUMINUM_COATED_MYLAR * 0.02;
-                char label[64];
-                snprintf(label, sizeof(label), "Full: N=%d + Earth + Sun + SRP", N_full);
-                run_scenario(label, &p, y0, t_end);
+                {
+                    OrbitParams p = base;
+                    p.eph = &eph_handle;
+                    p.hg  = &hg;
+                    p.use_hpc       = 0;
+                    p.use_earth_3rd = 1;
+                    p.use_sun_3rd   = 1;
+                    p.srp_AoM_Cr    = CR_ALUMINUM_COATED_MYLAR * 0.02;
+                    char label[64];
+                    snprintf(label, sizeof(label), "Full: N=%d + 3rd + SRP (ref)", N_full);
+                    run_scenario(label, &p, y0, t_end);
+                }
+                {
+                    OrbitParams p = base;
+                    p.eph = &eph_handle;
+                    p.hg  = &hg;
+                    p.use_hpc       = 1;
+                    p.use_earth_3rd = 1;
+                    p.use_sun_3rd   = 1;
+                    p.srp_AoM_Cr    = CR_ALUMINUM_COATED_MYLAR * 0.02;
+                    char label[64];
+                    snprintf(label, sizeof(label), "Full: N=%d + 3rd + SRP (hpc)", N_full);
+                    run_scenario(label, &p, y0, t_end);
+                }
 
                 spody_free_HarmonicGravity(&hg);
                 spody_free_HarmonicGravityData(&hgd);

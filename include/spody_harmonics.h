@@ -62,6 +62,21 @@ typedef struct {
 } HarmonicGravity;
 
 void spody_get_hgaccbodyfixed(HarmonicGravity *hg, double pos[3], double acc_out[3]);
+
+/* High-performance variant of spody_get_hgaccbodyfixed.
+ * Same numerical contract as the reference but optimized for throughput:
+ *   - column loop is branch-free (relies on recurr_b being 0 where needed)
+ *   - accumulation loop is peeled at m=0 and m=n so the central body is
+ *     branch-free and amenable to SIMD reduction
+ *   - hot pointers tagged restrict so the auto-vectorizer can reason
+ *   - inner loops carry #pragma omp simd hints for GCC/Clang (active when
+ *     the project is built with SPODY_ENABLE_OMP_SIMD=ON)
+ *
+ * Use this in production hot paths (per-step RHS in propagation). The
+ * unsuffixed function above remains as the algorithmic reference for
+ * regression tests and audit. */
+void spody_get_hgaccbodyfixed_hpc(HarmonicGravity *hg, double pos[3], double acc_out[3]);
+
 int spody_load_HarmonicGravityData(HarmonicGravityData *hgd, const char *filename, int degree);
 int spody_setup_HarmonicGravity(HarmonicGravity *hg, HarmonicGravityData *hgd);
 int spody_free_HarmonicGravity(HarmonicGravity *hg);

@@ -29,6 +29,12 @@ if(UNIX OR APPLE)
     target_link_libraries(bench_integrator_physics PRIVATE m)
 endif()
 
+add_executable(bench_harmonics_hpc benchmarks/bench_harmonics_hpc.c)
+target_link_libraries(bench_harmonics_hpc PRIVATE spody_core)
+if(UNIX OR APPLE)
+    target_link_libraries(bench_harmonics_hpc PRIVATE m)
+endif()
+
 # ---- One-shot tools ----
 add_executable(gen_de440_spody benchmarks/gen_de440_spody.c)
 target_link_libraries(gen_de440_spody PRIVATE spody_core)
@@ -44,6 +50,15 @@ add_executable(test_integrator_kepler tests/test_integrator_kepler.c)
 target_link_libraries(test_integrator_kepler PRIVATE spody_core)
 if(UNIX OR APPLE)
     target_link_libraries(test_integrator_kepler PRIVATE m)
+endif()
+
+add_executable(test_harmonics_hpc tests/test_harmonics_hpc.c)
+target_link_libraries(test_harmonics_hpc PRIVATE spody_core)
+if(UNIX OR APPLE)
+    target_link_libraries(test_harmonics_hpc PRIVATE m)
+endif()
+if(SPODY_GRGM1200A_PATH)
+    add_test(NAME harmonics_hpc COMMAND test_harmonics_hpc "${SPODY_GRGM1200A_PATH}")
 endif()
 
 # Register ctest entries.

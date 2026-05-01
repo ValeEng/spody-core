@@ -48,7 +48,16 @@ Download the following files into `raw_data/DE440/`:
 
 ### 2. Generate the Spody binary file
 
-The ASCII files must be converted once into the internal binary format (`.spody`) used by the memory-mapped ephemeris system. Call this function once in your code before any simulation:
+The ASCII files must be converted once into the internal binary format (`.spody`) used by the memory-mapped ephemeris system. The TVB suite ships a one-shot helper that does it for you:
+
+```powershell
+# from spody-core/, after building with -DSPODY_BUILD_TVB=ON
+build\tvb\Release\gen_de440_spody.exe
+```
+
+This produces `raw_data/DE440/de440.spody` (~100 MB) starting from all the JPL ASCII chunks present under `raw_data/DE440/`. Run it once.
+
+If you prefer to do it from your own code, the underlying API is:
 
 ```c
 #include "spody_core.h"
@@ -58,11 +67,10 @@ const char *dates[]  = {"01550","01650","01750","01850","01950",
                          "02050","02150","02250","02350","02450","02550"};
 const int   n_files  = 11;
 
-// Generates: raw_data/DE440/de440.spody
 int ret = spody_createfile_MappedEphemerisData(path, dates, n_files, "440");
 ```
 
-This writes `de440.spody` into `raw_data/DE440/`. Run it **once** — after that, load the binary directly. The library uses a two-step setup: a shared, read-only `MappedEphemerisData` (one per process) and a per-thread `MappedEphemeris` query handle that holds a private Chebyshev cache.
+After that, load the binary directly. The library uses a two-step setup: a shared, read-only `MappedEphemerisData` (one per process) and a per-thread `MappedEphemeris` query handle that holds a private Chebyshev cache.
 
 ```c
 // Setup once (e.g. on the main thread): shared, read-only
@@ -99,7 +107,7 @@ spody_free_MappedEphemerisData(&med);
 
 ## GRGM1200A — GRAIL Lunar Gravity Model
 
-Used by: `spody_harmonics` module (`spody_load_HarmonicGravityData`, `spody_setup_HarmonicGravity`)
+Used by: `spody_harmonics` module (`spody_load_HarmonicGravityData`, `spody_setup_HarmonicGravity`, `spody_get_hgaccbodyfixed`, `spody_get_hgaccbodyfixed_hpc`)
 
 ### Download
 
@@ -121,24 +129,31 @@ Download and place in `raw_data/GRGM1200A/`:
 ```c
 #include "spody_core.h"
 
-HarmonicGravityData hgd;
-HarmonicGravity     hg;
+// Shared, read-only: load once per process
+HarmonicGravityData hgd = {0};
+spody_load_HarmonicGravityData(&hgd, "raw_data/GRGM1200A/gggrx_1200a_sha.tab", 100);
 
-// Load up to degree N (max 1200, higher = more accurate, slower)
-spody_load_HarmonicGravityData(&hgd, "raw_data/GRGM1200A/gggrx_1200a_sha.tab", 80);
+// Per-thread scratch buffers
+HarmonicGravity hg = {0};
 spody_setup_HarmonicGravity(&hg, &hgd);
 
-// Compute gravitational acceleration at a position in the Moon body-fixed frame [km, km/s^2]
-double pos[3] = { ... };   // position in lunar PA frame [km]
+// Compute gravitational acceleration in the Moon body-fixed (PA) frame [km, km/s^2]
+double pos[3] = { /* lunar PA frame, km */ };
 double acc[3] = {0};
-compute_harmonic_lunar_gravity_hpc(&hg, pos, acc);
+spody_get_hgaccbodyfixed_hpc(&hg, pos, acc);   // production hot path
 
-// Free when done
+// or, for regression / audit:
+// spody_get_hgaccbodyfixed(&hg, pos, acc);    // reference variant
+
 spody_free_HarmonicGravity(&hg);
 spody_free_HarmonicGravityData(&hgd);
 ```
 
-> **Degree selection:** degree 80 is a good balance between accuracy and speed for most mission scenarios. Use degree ≥ 200 for high-fidelity low-lunar-orbit propagation.
+> **Threading:** like the ephemeris module, the same `HarmonicGravityData` is safely shared across threads; each thread must own its own `HarmonicGravity` handle (because of the rolling-row scratch buffers).
+
+> **Degree selection:** N=80–100 is a good balance between accuracy and speed for most mission scenarios. Use N≥200 for high-fidelity low-lunar-orbit propagation. Cost scales as ~N² (verified empirically: N=100 → ~10 µs/call, N=200 → ~34 µs/call on GCC/Ryzen-class CPU with `SPODY_ENABLE_OMP_SIMD=ON`).
+
+> **`_hpc` vs reference:** `spody_get_hgaccbodyfixed_hpc` is the production-grade variant (branch-free + peeled inner loops + restrict-tagged pointers + `#pragma omp simd reduction` on GCC/Clang). It produces results bit-equivalent to the reference (rel error < 1e-12) and is ~1.5–1.7× faster on GCC/Clang at N≥50. Use it inside the RHS of a propagator; keep the reference for regression tests and audit.
 
 ---
 

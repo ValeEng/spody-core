@@ -228,6 +228,167 @@ void spody_get_hgaccbodyfixed(HarmonicGravity *hg, double pos[3], double acc_out
 
 }
 
+/* ============================================================
+ * High-performance variant: branch-free + peeled + SIMD hints.
+ * Same numerical contract as spody_get_hgaccbodyfixed.
+ *
+ * To take effect, the project must be built with SPODY_ENABLE_OMP_SIMD=ON
+ * (which adds /openmp:experimental on MSVC or -fopenmp-simd on GCC/Clang).
+ *
+ * MSVC notes (and reason for compiler-gated macros below):
+ *   - `/openmp:experimental` ignores `reduction` on `simd` (warning C4849),
+ *     so vectorizing the accumulation loop without proper privatization
+ *     produces wrong results.
+ *   - Even on the column loop (no reduction), MSVC's SIMD output drifts
+ *     numerically beyond the test tolerance, presumably from FMA fusion
+ *     or fast-math behaviour enabled by `/openmp:experimental`.
+ *   - On MSVC we therefore skip the pragmas entirely and let `/O2`
+ *     auto-vectorize what it can. On GCC/Clang the explicit pragmas
+ *     light up SIMD with the correct reduction semantics.
+ * ============================================================ */
+#if defined(__clang__) || defined(__GNUC__)
+    #define SPODY_SIMD                  _Pragma("omp simd")
+    #define SPODY_SIMD_REDUCTION_S1234  _Pragma("omp simd reduction(+:s1,s2,s3,s4)")
+#else
+    #define SPODY_SIMD                  /* no pragma on MSVC: numerical drift */
+    #define SPODY_SIMD_REDUCTION_S1234  /* no pragma on MSVC: reduction unsupported */
+#endif
+
+/* Tell the compiler the pointers it tags don't alias.
+ * Required for MSVC's auto-vectorizer to clear reason 1502
+ * ("loop body too complex"). C99 has `restrict`; MSVC has `__restrict`. */
+#if defined(_MSC_VER) && !defined(__clang__)
+    #define SPODY_RESTRICT __restrict
+#else
+    #define SPODY_RESTRICT restrict
+#endif
+void spody_get_hgaccbodyfixed_hpc(HarmonicGravity *hg, double pos[3], double acc_out[3]) {
+
+    double r2 = pos[0]*pos[0] + pos[1]*pos[1] + pos[2]*pos[2];
+    double r = sqrt(r2);
+    double ir = 1.0 / r;
+
+    double s = pos[0] * ir;
+    double t = pos[1] * ir;
+    double u = pos[2] * ir;
+
+    double rho = hg->hgd->R_ref * ir;
+    int N_max = hg->hgd->N;
+
+    double * SPODY_RESTRICT real = hg->real;
+    double * SPODY_RESTRICT imag = hg->imag;
+
+    double * SPODY_RESTRICT r_np1 = hg->A_row0;
+    double * SPODY_RESTRICT r_n   = hg->A_row1;
+    double * SPODY_RESTRICT r_nm1 = hg->A_row2;
+    double *tmp;
+
+    real[0] = 1.0;
+    imag[0] = 0.0;
+    if (N_max >= 1) {
+        real[1] = s; imag[1] = t;
+    }
+    // serial recurrence: cannot SIMD (each iter depends on the previous)
+    for (int m = 2; m <= N_max; m++) {
+        real[m] = s * real[m-1] - t * imag[m-1];
+        imag[m] = t * real[m-1] + s * imag[m-1];
+    }
+
+    r_n[0] = 1.0;
+    double a1 = 0, a2 = 0, a3 = 0, a4 = 0;
+
+    double rho_n = -(hg->hgd->GM / (hg->hgd->R_ref * hg->hgd->R_ref)) * (rho * rho * rho);
+
+    // pull pointers out so the SIMD loops see plain non-aliasing arrays
+    const double * SPODY_RESTRICT recurr_a  = hg->hgd->recurr_a;
+    const double * SPODY_RESTRICT recurr_b  = hg->hgd->recurr_b;
+    const double * SPODY_RESTRICT recurr_s3 = hg->hgd->recurr_s3;
+    const double * SPODY_RESTRICT recurr_s4 = hg->hgd->recurr_s4;
+    const double * SPODY_RESTRICT Cv        = hg->hgd->C;
+    const double * SPODY_RESTRICT Sv        = hg->hgd->S;
+
+    for (int n = 0; n <= N_max; n++) {
+
+        int np1 = n + 1;
+        int row_np1_start = (np1 * (np1 + 1)) / 2;
+        int idx_diag = row_np1_start + np1;
+
+        // diagonal
+        r_np1[np1] = recurr_a[idx_diag] * r_n[n];
+
+        // ---- column (Phase 2): branch-free + SIMD ----
+        // m hoisted outside the for() because MSVC's OpenMP requires the
+        // canonical loop form (init-expr cannot be a declaration).
+        int m;
+        SPODY_SIMD
+        for (m = 0; m <= n; m++) {
+            int idx = row_np1_start + m;
+            r_np1[m] = recurr_a[idx] * u * r_n[m] - recurr_b[idx] * r_nm1[m];
+        }
+
+        if (n >= 2) {
+
+            double s1 = 0, s2 = 0, s3 = 0, s4 = 0;
+            int row_start = (n * (n + 1)) / 2;
+
+            // ---- m = 0: only s3 and s4 contribute ----
+            {
+                int k = row_start;
+                double C = Cv[k];
+                double S = Sv[k];
+                double D = C * real[0] + S * imag[0];
+                s3 += recurr_s3[k] * r_n[1]   * D;
+                s4 += recurr_s4[k] * r_np1[1] * D;
+            }
+
+            // ---- m = 1..n-1: branch-free + SIMD reduction ----
+            SPODY_SIMD_REDUCTION_S1234
+            for (m = 1; m < n; m++) {
+                int k = row_start + m;
+                double C = Cv[k];
+                double S = Sv[k];
+
+                double D = C * real[m]   + S * imag[m];
+                double E = C * real[m-1] + S * imag[m-1];
+                double F = S * real[m-1] - C * imag[m-1];
+
+                s1 += m * r_n[m] * E;
+                s2 += m * r_n[m] * F;
+                s3 += recurr_s3[k] * r_n[m+1]   * D;
+                s4 += recurr_s4[k] * r_np1[m+1] * D;
+            }
+
+            // ---- m = n: s1, s2, s4 (recurr_s3 is 0 there) ----
+            {
+                int k = row_start + n;
+                double C = Cv[k];
+                double S = Sv[k];
+                double D = C * real[n]   + S * imag[n];
+                double E = C * real[n-1] + S * imag[n-1];
+                double F = S * real[n-1] - C * imag[n-1];
+                s1 += n * r_n[n] * E;
+                s2 += n * r_n[n] * F;
+                s4 += recurr_s4[k] * r_np1[n+1] * D;
+            }
+
+            rho_n *= rho;
+            a1 += rho_n * s1;
+            a2 += rho_n * s2;
+            a3 += rho_n * s3;
+            a4 += rho_n * s4;
+        }
+
+        tmp = r_nm1;
+        r_nm1 = r_n;
+        r_n   = r_np1;
+        r_np1 = tmp;
+    }
+
+    acc_out[0] = a1 - s * a4;
+    acc_out[1] = a2 - t * a4;
+    acc_out[2] = a3 - u * a4;
+}
+
 int spody_load_HarmonicGravityData(HarmonicGravityData *hgd, const char *filename, int degree){
     
     FILE *file = fopen(filename,"r");
