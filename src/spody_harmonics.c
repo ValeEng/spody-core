@@ -137,11 +137,11 @@ void spody_get_hgaccbodyfixed(HarmonicGravity *hg, double pos[3], double acc_out
     r_n[0] = 1.0; // A[0][0]
     double a1 = 0, a2 = 0, a3 = 0, a4 = 0; // accumulator for acceleration components
 
-    // setup rho_n. 
+    // setup rho_n.
     // n=0 -> rho^2 | n=1 -> rho^3 | n=2 -> rho^4.
-    double rho_n = -(hg->hgd->GM / (hg->hgd->R_ref * hg->hgd->R_ref)) * (rho * rho * rho); 
-    // the minus is necessary to be consistent with the coordinate system outside
-    // we can do it beacause we start the evaluation from n=2
+    // Sign convention: this prefactor yields acc_out = -grad(V_pert) so
+    // callers can simply do dvdt += acc_out (i.e. acc_out IS the acceleration).
+    double rho_n = (hg->hgd->GM / (hg->hgd->R_ref * hg->hgd->R_ref)) * (rho * rho * rho);
 
     // MAIN LOOP (starting from 0 for row 1 generation)
     for (int n = 0; n <= N_max; n++) {
@@ -297,7 +297,9 @@ void spody_get_hgaccbodyfixed_hpc(HarmonicGravity *hg, double pos[3], double acc
     r_n[0] = 1.0;
     double a1 = 0, a2 = 0, a3 = 0, a4 = 0;
 
-    double rho_n = -(hg->hgd->GM / (hg->hgd->R_ref * hg->hgd->R_ref)) * (rho * rho * rho);
+    // Sign convention: see the reference kernel above. acc_out IS the
+    // acceleration (-grad V_pert), so callers do dvdt += acc_out.
+    double rho_n = (hg->hgd->GM / (hg->hgd->R_ref * hg->hgd->R_ref)) * (rho * rho * rho);
 
     // pull pointers out so the SIMD loops see plain non-aliasing arrays
     const double * SPODY_RESTRICT recurr_a  = hg->hgd->recurr_a;
