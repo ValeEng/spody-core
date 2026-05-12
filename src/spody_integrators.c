@@ -25,38 +25,44 @@
 #define RKDP45_FACTOR_DOWNSCALE   0.1   // min shrinkage of h after a rejected step
 #define RKDP45_RETRIES_PER_STEP   500   // safety cap on rejection retries per step
 
-// Dormand-Prince 5(4) Butcher tableau
+// Dormand-Prince 5(4) Butcher tableau -- "7S" pair from the same paper.
 // J. R. Dormand and P. J. Prince, "A family of embedded Runge-Kutta formulae",
 // J. Comput. Appl. Math., Vol. 6, 1980.
+// Same order as the classical "7M" pair but with a different stage pattern
+// that yields a more reliable embedded error estimate; this is the variant
+// used by the LRO reference simulation, and the one we standardise on.
+//   b_5 = a[6]  (FSAL: first-same-as-last)
+//   b_4 = {431/5000, 0, 333/500, -7857/10000, 957/1000, 193/2000, -1/50}
+//   e   = b_5 - b_4
 static const double rkdp45_a[7][7] = {
-    {0.0,            0.0,             0.0,            0.0,           0.0,             0.0,        0.0},
-    {1.0/5.0,        0.0,             0.0,            0.0,           0.0,             0.0,        0.0},
-    {3.0/40.0,       9.0/40.0,        0.0,            0.0,           0.0,             0.0,        0.0},
-    {44.0/45.0,     -56.0/15.0,       32.0/9.0,       0.0,           0.0,             0.0,        0.0},
-    {19372.0/6561.0,-25360.0/2187.0,  64448.0/6561.0,-212.0/729.0,   0.0,             0.0,        0.0},
-    {9017.0/3168.0, -355.0/33.0,      46732.0/5247.0, 49.0/176.0,   -5103.0/18656.0,  0.0,        0.0},
-    {35.0/384.0,     0.0,             500.0/1113.0,   125.0/192.0,  -2187.0/6784.0,   11.0/84.0,  0.0}
+    {0.0,         0.0,         0.0,         0.0,         0.0,        0.0,       0.0},
+    {2.0/9.0,     0.0,         0.0,         0.0,         0.0,        0.0,       0.0},
+    {1.0/12.0,    1.0/4.0,     0.0,         0.0,         0.0,        0.0,       0.0},
+    {55.0/324.0, -25.0/108.0,  50.0/81.0,   0.0,         0.0,        0.0,       0.0},
+    {83.0/330.0, -13.0/22.0,   61.0/66.0,   9.0/110.0,   0.0,        0.0,       0.0},
+    {-19.0/28.0,  9.0/4.0,     1.0/7.0,    -27.0/7.0,    22.0/7.0,   0.0,       0.0},
+    {19.0/200.0,  0.0,         3.0/5.0,    -243.0/400.0, 33.0/40.0,  7.0/80.0,  0.0}
 };
 
 static const double rkdp45_c[7] = {
     0.0,
-    1.0/5.0,
-    3.0/10.0,
-    4.0/5.0,
-    8.0/9.0,
+    2.0/9.0,
+    1.0/3.0,
+    5.0/9.0,
+    2.0/3.0,
     1.0,
     1.0
 };
 
 // error coefficients e = b_5 - b_4
 static const double rkdp45_e[7] = {
-     71.0/57600.0,
+    (19.0/200.0   - 431.0/5000.0),
      0.0,
-    -71.0/16695.0,
-     71.0/1920.0,
-    -17253.0/339200.0,
-     22.0/525.0,
-    -1.0/40.0
+    (3.0/5.0      - 333.0/500.0),
+    (-243.0/400.0 + 7857.0/10000.0),
+    (33.0/40.0    - 957.0/1000.0),
+    (7.0/80.0     - 193.0/2000.0),
+     1.0/50.0
 };
 
 // Classical Runge-Kutta 4th order Butcher tableau
@@ -97,6 +103,7 @@ static void zero_all_buffers(IntegratorAllData *integ) {
     integ->y_tmp = NULL;
     integ->y_err = NULL;
     integ->y     = NULL;
+    integ->y_old = NULL;
 }
 
 //----- defaults ----------------------------------------------------------
@@ -148,6 +155,7 @@ int spody_setup_integrator(IntegratorAllData *integ,
     integ->user   = user;
     integ->t      = 0.0;
     integ->h_old  = 0.0;
+    integ->t_old  = 0.0;
 
     if (opt) {
         integ->opt = *opt;
@@ -159,6 +167,7 @@ int spody_setup_integrator(IntegratorAllData *integ,
     // common allocations
     if (alloc_buf(&integ->y, (size_t)dim))     goto fail;
     if (alloc_buf(&integ->y_tmp, (size_t)dim)) goto fail;
+    if (alloc_buf(&integ->y_old, (size_t)dim)) goto fail;   // for dense output
 
     // method-specific scratch sizing for the stage buffer `k`
     int n_stages = 0;
@@ -197,6 +206,7 @@ int spody_free_integrator(IntegratorAllData *integ) {
     free_buf(&integ->y_tmp);
     free_buf(&integ->y_err);
     free_buf(&integ->k);
+    free_buf(&integ->y_old);
     return SPODY_INTEG_OK;
 }
 
@@ -225,6 +235,10 @@ static int step_rkdp45(IntegratorAllData *integ) {
     double temp_clock = clock;
     int returnNumber;
     int steps = 0;
+
+    // Snapshot of the state at the start of the step. Needed for dense
+    // output (y(theta) = y_old + h_old * sum_i b_i(theta) * k_i).
+    memcpy(integ->y_old, state, sizeof(double) * (size_t)dim);
 
     do {
 
@@ -328,7 +342,8 @@ static int step_rkdp45(IntegratorAllData *integ) {
 
             memcpy(state, temp, sizeof(double) * (size_t)dim);
             integ->h_old = integ->h;
-            integ->t = clock + integ->h_old;
+            integ->t_old = clock;
+            integ->t     = clock + integ->h_old;
 
             integ->h *= fmin(RKDP45_FACTOR_UPSCALE, scale);
             if (integ->h > integ->opt.h_max) integ->h = integ->opt.h_max;
@@ -380,6 +395,9 @@ static int step_rk4(IntegratorAllData *integ) {
     double clock = integ->t;
     double temp_clock = clock;
     int returnNumber;
+
+    // snapshot for dense output bookkeeping (RK4 dense_eval not yet implemented)
+    memcpy(integ->y_old, state, sizeof(double) * (size_t)dim);
 
     for (int j = 0; j < 4; j++) {
 
@@ -479,4 +497,83 @@ int spody_propagate_untilend(IntegratorAllData *integ, double t_end) {
         n_steps++;
         if (cap && n_steps >= cap) return SPODY_INTEG_ERR_MAX_STEPS;
     }
+}
+
+/* ============================================================
+ * Dense output for Dormand-Prince 5(4)
+ *
+ * Quartic polynomial interpolant inside the just-completed step:
+ *
+ *     y(t_old + theta * h_old) = y_old + h_old * theta *
+ *         sum_{s=1..7} k_s_deriv * ( P[s][0] + P[s][1]*theta
+ *                                  + P[s][2]*theta^2 + P[s][3]*theta^3 )
+ *
+ * where P is the standard DOPRI5 dense-output coefficient matrix used
+ * by scipy.integrate.RK45 / Hairer-Wanner ("Solving ODEs I", I.6, Table
+ * 6.1 of the second edition). Note s=2 is identically zero (k2 does not
+ * contribute) but we keep it in the loop for clarity.
+ *
+ * Implementation note: the k_s stored in integ->k are already
+ * pre-multiplied by h_old (see step_rkdp45). Substituting
+ *     k_s_pre = h_old * k_s_deriv
+ * the h_old factor cancels and the formula becomes
+ *     y(theta) = y_old + theta * sum_s k_s_pre * Q_s(theta)
+ * with Q_s(theta) = P[s][0] + P[s][1]*theta + P[s][2]*theta^2 + P[s][3]*theta^3.
+ * ============================================================ */
+static const double rkdp45_dense_P[7][4] = {
+    /* k1 */ {  1.0,
+                -8048581381.0   /  2820520608.0,
+                 8663915743.0   /  2820520608.0,
+               -12715105075.0   / 11282082432.0 },
+    /* k2 */ {  0.0, 0.0, 0.0, 0.0 },
+    /* k3 */ {  0.0,
+               131558114200.0  / 32700410799.0,
+               -68118460800.0  / 10900136933.0,
+                87487479700.0  / 32700410799.0 },
+    /* k4 */ {  0.0,
+                -1754552775.0  /   470086768.0,
+                14199371449.0  /   470086768.0,
+               -10690763975.0  /  1880347072.0 },
+    /* k5 */ {  0.0,
+               127303824393.0  / 49829197408.0,
+              -318862633887.0  / 49829197408.0,
+               701980252875.0  /199316789632.0 },
+    /* k6 */ {  0.0,
+                 -282668133.0  /   205662961.0,
+                 2019193451.0  /   616988883.0,
+                -1453857185.0  /   822651844.0 },
+    /* k7 */ {  0.0,
+                  40617522.0   /   29380423.0,
+                -110615467.0   /   29380423.0,
+                  69997945.0   /   29380423.0 },
+};
+
+int spody_dense_eval(const IntegratorAllData *integ, double theta, double *y_out) {
+    if (!integ || !y_out) return SPODY_INTEG_ERR_NULL;
+    if (integ->method != SPODY_INTEG_RK45) return SPODY_INTEG_ERR_NULL;
+    if (!integ->y_old || !integ->k) return SPODY_INTEG_ERR_NULL;
+
+    if (theta < 0.0) theta = 0.0;
+    if (theta > 1.0) theta = 1.0;
+
+    /* per-stage scalar weights w_s(theta) = theta * (P[s][0] + P[s][1]*theta + ...) */
+    double th2 = theta * theta;
+    double th3 = th2   * theta;
+    double w[7];
+    for (int s = 0; s < 7; s++) {
+        w[s] = theta * (  rkdp45_dense_P[s][0]
+                        + rkdp45_dense_P[s][1] * theta
+                        + rkdp45_dense_P[s][2] * th2
+                        + rkdp45_dense_P[s][3] * th3 );
+    }
+
+    const int dim = integ->dim;
+    for (int i = 0; i < dim; i++) {
+        double acc = 0.0;
+        for (int s = 0; s < 7; s++) {
+            acc += w[s] * integ->k[s * dim + i];
+        }
+        y_out[i] = integ->y_old[i] + acc;
+    }
+    return SPODY_INTEG_OK;
 }

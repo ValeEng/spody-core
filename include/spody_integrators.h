@@ -102,24 +102,21 @@ typedef struct {
     IntegratorOptions opt;
 
     int dim;                      // state vector size
-    double t;                     // current independent variable
+    double t;                     // current independent variable (after the last step)
     double *y;                    // current state, size `dim`
     double h;                     // next step size proposed by the controller
     double h_old;                 // step size actually used in the last accepted step
+    double t_old;                 // t at the START of the last accepted step (= t - h_old)
+    double *y_old;                // state at the START of the last accepted step
 
     spody_rhs_fn rhs;             // user-provided dynamics
     void *user;                   // opaque payload passed to rhs
 
     // scratch buffers, sized at setup time, reused across steps
-    double *k;
+    double *k;                    // RK stages, kept alive after step accept for dense output
     double *y_tmp;                // intermediate state for stage evaluation
-    double *y_err; 
-    /*
-    double *k1, *k2, *k3, *k4;    // RK4 / RK45 base stages
-    double *k5, *k6, *k7;         // additional stages (RK45 / RK78)
-    double *k8, *k9, *k10, *k11, *k12, *k13; // RK78 high-order stages
-               // error estimate (adaptive methods)
-    */
+    double *y_err;
+
 } IntegratorAllData;
 
 /*
@@ -177,6 +174,26 @@ int spody_propagate_onestep(IntegratorAllData *integ);
  * SPODY_INTEG_ERR_MAX_STEPS otherwise.
  */
 int spody_propagate_untilend(IntegratorAllData *integ, double t_end);
+
+/* ============================================================
+ * Dense output (continuous interpolation inside the last accepted step)
+ *
+ * After spody_propagate_onestep returns SPODY_INTEG_OK, this function
+ * can be called any number of times to evaluate the state at any point
+ * within the just-completed interval [t_old, t_old + h_old]:
+ *
+ *     y(theta) = y(t_old + theta * h_old),    theta in [0, 1]
+ *
+ * Currently implemented for SPODY_INTEG_RK45 (Dormand-Prince 5(4))
+ * using the Shampine 1986 quintic interpolant: the same accuracy of
+ * the underlying 5th-order method, no extra RHS evaluations -- the
+ * stored RK stages are reused.
+ *
+ * Other methods (RK4, Verlet, RK78) currently return
+ * SPODY_INTEG_ERR_NULL; their dense-output formulas can be added later.
+ *
+ * `theta` is clamped to [0, 1] internally. */
+int spody_dense_eval(const IntegratorAllData *integ, double theta, double *y_out);
 
 #ifdef __cplusplus
 }
