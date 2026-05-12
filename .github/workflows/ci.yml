@@ -1,0 +1,63 @@
+name: CI
+
+# Build spody_core on the three major desktop platforms with both common
+# free compilers per platform. Runs on every push to main and every pull
+# request. Each leg is independent (fail-fast: false) so one broken
+# platform does not hide failures on the others.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel in-progress runs of the same workflow on the same branch when a
+# new commit lands. Saves CI minutes on rapid pushes.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.os }} / ${{ matrix.compiler }}
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            compiler: gcc
+            cc: gcc
+          - os: ubuntu-latest
+            compiler: clang
+            cc: clang
+          - os: macos-latest
+            compiler: clang
+            cc: clang
+          - os: windows-latest
+            compiler: msvc
+            # MSVC: no CC override, cmake auto-detects from the VS toolchain
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure
+        env:
+          CC: ${{ matrix.cc }}
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Install (sanity check)
+        run: cmake --install build --config Release --prefix install_dir
+
+      - name: List built artifacts
+        shell: bash
+        run: |
+          echo "--- library ---"
+          find build install_dir -name "spody_core*.lib" -o -name "libspody_core*" 2>/dev/null
+          echo "--- installed headers ---"
+          ls install_dir/include 2>/dev/null | head -20
