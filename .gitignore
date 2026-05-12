@@ -59,6 +59,7 @@ add_license_header.ps1
 raw_data/GRGM1200A/gggrx_1200a_sha.lbl
 raw_data/GRGM1200A/gggrx_1200a_sha.tab
 build/
+tvb/
 raw_data/DE440/de440.spody
 raw_data/DE440/ascp01550.440
 raw_data/DE440/ascp01650.440
@@ -74,3 +75,7 @@ raw_data/DE440/ascp02550.440
 raw_data/DE440/header.440
 raw_data/DE440/testpo.440
 build-gcc/
+.claude/
+
+raw_data/GRGM1200B/gggrx_1200b_sha.lbl
+raw_data/GRGM1200B/gggrx_1200b_sha.tab

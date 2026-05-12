@@ -1,0 +1,55 @@
+/*
+ * spody_version.h
+ *
+ * AUTO-GENERATED from spody_version.h.in by CMake at configure time.
+ * Do NOT edit the generated copy under <build>/generated/spody_version.h --
+ * edit the .in template under include/ instead.
+ *
+ * The header exposes both compile-time macros (for #if checks) and a small
+ * runtime API. The runtime functions return the values baked into the .lib
+ * at build time, which is the reliable way to detect a header/library skew
+ * (consumer compiled against vX.Y, linked against vX.Z).
+ */
+
+#ifndef SPODY_VERSION_H
+#define SPODY_VERSION_H
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* ---- compile-time version (from CMake project() command) -------------- */
+#define SPODY_VERSION_MAJOR  @PROJECT_VERSION_MAJOR@
+#define SPODY_VERSION_MINOR  @PROJECT_VERSION_MINOR@
+#define SPODY_VERSION_PATCH  @PROJECT_VERSION_PATCH@
+#define SPODY_VERSION_STRING "@PROJECT_VERSION@"
+
+/* ---- build metadata (filled at CMake configure time) ------------------ *
+ *
+ * SPODY_GIT_HASH:
+ *   short SHA of HEAD when the build tree was configured.
+ *   Suffixed with "-dirty" if the working tree had uncommitted changes.
+ *   Falls back to "unknown" if the source is not a git checkout.
+ *
+ * SPODY_BUILD_TIMESTAMP:
+ *   ISO-8601 UTC timestamp of the configure step (NOT the compile step).
+ *   Re-run cmake to refresh.
+ */
+#define SPODY_GIT_HASH        "@SPODY_GIT_HASH@"
+#define SPODY_BUILD_TIMESTAMP "@SPODY_BUILD_TIMESTAMP@"
+
+/* ---- runtime accessors ----------------------------------------------- *
+ *
+ * These return the same strings as the macros above, BUT taken from the
+ * compiled .lib. Use them when you need to know what the linked library
+ * actually is (e.g. diagnostic banners, header/lib skew detection).
+ */
+const char *spody_version(void);
+const char *spody_git_hash(void);
+const char *spody_build_timestamp(void);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* SPODY_VERSION_H */

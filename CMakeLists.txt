@@ -42,9 +42,6 @@ option(SPODY_WHOLE_PROGRAM_OPT
 option(SPODY_SILENCE_MSVC_CRT_WARNINGS
     "Silence MSVC warnings about 'unsafe' standard C functions" ON)
 
-option(SPODY_BUILD_TVB
-    "Build tests, validations and benchmarks under tvb/" OFF)
-
 option(SPODY_ENABLE_OMP_SIMD
     "Enable #pragma omp simd hints in inner loops (MSVC: /openmp:experimental, GCC/Clang: -fopenmp-simd)" OFF)
 
@@ -77,15 +74,56 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 # -----------------------------------------------------------------------------
+# Version metadata (git hash + dirty flag + build timestamp)
+# -----------------------------------------------------------------------------
+# Generated values are written into spody_version.h via configure_file.
+# Re-run cmake to refresh the hash/timestamp after a commit.
+find_package(Git QUIET)
+if(GIT_FOUND AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/.git")
+    execute_process(
+        COMMAND "${GIT_EXECUTABLE}" rev-parse --short HEAD
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+        OUTPUT_VARIABLE SPODY_GIT_HASH
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+    )
+    execute_process(
+        COMMAND "${GIT_EXECUTABLE}" diff-index --quiet HEAD --
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+        RESULT_VARIABLE SPODY_GIT_DIRTY
+        ERROR_QUIET
+    )
+    if(SPODY_GIT_HASH AND NOT SPODY_GIT_DIRTY EQUAL 0)
+        set(SPODY_GIT_HASH "${SPODY_GIT_HASH}-dirty")
+    endif()
+endif()
+if(NOT SPODY_GIT_HASH)
+    set(SPODY_GIT_HASH "unknown")
+endif()
+string(TIMESTAMP SPODY_BUILD_TIMESTAMP "%Y-%m-%dT%H:%M:%SZ" UTC)
+
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/spody_version.h.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/spody_version.h"
+    @ONLY
+)
+
+# -----------------------------------------------------------------------------
 # Source files
 # -----------------------------------------------------------------------------
 set(SOURCES
     src/spody_eclipse.c
     src/spody_ephemeris.c
+    src/spody_events.c
+    src/spody_forcemodels.c
     src/spody_harmonics.c
     src/spody_integrators.c
+    src/spody_io.c
     src/spody_mapping.c
     src/spody_math.c
+    src/spody_mission.c
+    src/spody_solver.c
+    src/spody_version.c
 )
 
 # -----------------------------------------------------------------------------
@@ -202,6 +240,7 @@ endif()
 target_include_directories(spody_core
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/generated>
         $<INSTALL_INTERFACE:include>
 )
 
@@ -227,24 +266,21 @@ install(TARGETS spody_core
 
 # Install all public headers. Using a directory install means new headers
 # added under include/ are picked up automatically, no edit required here.
-install(DIRECTORY include/ DESTINATION include)
-
-# -----------------------------------------------------------------------------
-# Tests, validations and benchmarks (opt-in)
-# -----------------------------------------------------------------------------
-if(SPODY_BUILD_TVB)
-    add_subdirectory(tvb)
-endif()
+install(DIRECTORY include/ DESTINATION include
+    FILES_MATCHING PATTERN "*.h")
+# Generated header (configure-time) is installed alongside the others.
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/generated/spody_version.h"
+    DESTINATION include)
 
 # -----------------------------------------------------------------------------
 # Configuration summary
 # -----------------------------------------------------------------------------
 message(STATUS "")
 message(STATUS "Spody Core configuration:")
+message(STATUS "  Version                 : ${PROJECT_VERSION} (git ${SPODY_GIT_HASH})")
 message(STATUS "  Build type              : ${CMAKE_BUILD_TYPE}")
 message(STATUS "  Fast math               : ${SPODY_FAST_MATH}")
 message(STATUS "  Whole-program opt       : ${SPODY_WHOLE_PROGRAM_OPT}")
-message(STATUS "  Build TVB               : ${SPODY_BUILD_TVB}")
 message(STATUS "  OMP SIMD pragmas        : ${SPODY_ENABLE_OMP_SIMD}")
 if(MSVC)
     message(STATUS "  Silence MSVC CRT warns  : ${SPODY_SILENCE_MSVC_CRT_WARNINGS}")

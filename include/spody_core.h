@@ -21,10 +21,16 @@ extern "C" {
 #endif
 
 
+#include "spody_version.h"
 #include "spody_ephemeris.h"
 #include "spody_harmonics.h"
 #include "spody_eclipse.h"
 #include "spody_integrators.h"
+#include "spody_solver.h"
+#include "spody_forcemodels.h"
+#include "spody_events.h"
+#include "spody_io.h"
+#include "spody_mission.h"
 #include "spody_math.h"
 #include "spody_const.h"
 
