@@ -2,6 +2,7 @@
 
 > SpOdy (**S**imultaneous **P**ropagation of **O**rbital **DY**namics) Core — A high-performance C library for astrodynamics and space mechanics.
 
+[![CI](https://github.com/ValeEng/spody-core/actions/workflows/ci.yml/badge.svg)](https://github.com/ValeEng/spody-core/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Language: C](https://img.shields.io/badge/Language-C99-lightgrey.svg)](https://en.wikipedia.org/wiki/C99)
 [![Build: CMake](https://img.shields.io/badge/Build-CMake%20%E2%89%A5%203.10-brightgreen.svg)](https://cmake.org/)
@@ -14,10 +15,13 @@
 
 The library provides a clean, modular API covering the core pillars of orbital mechanics:
 
-- 🌍 **Ephemeris parsing** — ASCII planetary data from JPL
-- 🌑 **Eclipse detection** — Umbra and penumbra modeling
-- 🌐 **Spherical harmonics gravity** — High-fidelity lunar gravity
-- 🚀 **Numerical integrators** — Adaptive Dormand-Prince 5(4) and classical RK4
+- 🌍 **Ephemeris parsing** — JPL DE binary, ET seconds past J2000 with `SPDYEPET` magic header
+- 🌑 **Eclipse detection** — Umbra and penumbra modeling (cylindrical cone)
+- 🌐 **Spherical harmonics gravity** — High-fidelity lunar gravity with Pines/Lundberg-Schutz recurrence (stable up to N≥1000)
+- 🚀 **Numerical integrators** — Adaptive Dormand-Prince 5(4) "7S" stability-optimal pair, classical RK4
+- 🛰 **Force models** — Composite RHS with two-body + harmonics + third bodies + SRP (cannonball, cylindrical eclipse)
+- 🎯 **Events & solver** — Event detection (impact, threshold crossings), one-shot propagator wrapper
+- 🧩 **I/O & mission** — Buffered file output and a top-level mission orchestration layer
 
 The runtime API is **thread-safe by construction**: shared, read-only data structures
 (ephemeris, gravity coefficients) are decoupled from per-thread query handles, so a
@@ -29,12 +33,18 @@ single dataset can drive many concurrent propagations without contention.
 
 | Module | Description |
 |---|---|
-| `ephemeris` | Parses and queries JPL ASCII ephemeris files for planetary positions and velocities (e.g. DE440). Memory-mapped binary format with thread-safe handle/data split. |
-| `eclipse` | Detects solar eclipse conditions (umbra/penumbra) for orbiting objects |
-| `harmonics` | Computes gravitational acceleration using spherical harmonic coefficients (e.g. GRGM1200A). Includes a `_hpc` SIMD-friendly variant for production hot paths. |
-| `integrators` | ODE integrators with a generic RHS callback. RKDP45 adaptive (validated, GMAT-style step control) and RK4 fixed-step are implemented; Verlet/RK78 are reserved. |
-| `math` | Shared math utilities (rotation matrices, vector operations) |
-| `mapping` | Cross-platform memory-mapped file I/O |
+| `ephemeris` | Parses and queries JPL planetary ephemerides (e.g. DE440). On-disk format is `SPDYEPET` (ET seconds past J2000, ~250× more precision than legacy JD-days). Memory-mapped with thread-safe handle/data split. |
+| `eclipse` | Detects solar eclipse conditions (umbra/penumbra) for orbiting objects. |
+| `harmonics` | Spherical-harmonics gravity using the Pines / Lundberg-Schutz recurrence. Returns the acceleration `-∇V_pert` (callers just sum into `dvdt`). Includes a `_hpc` SIMD-friendly variant for production hot paths. |
+| `integrators` | ODE integrators with a generic RHS callback. RKDP45 (Dormand-Prince 5(4) "7S" pair, GMAT-style step control) and RK4 fixed-step. |
+| `forcemodels` | Composite RHS used by the integrator: two-body central + spherical harmonics + third bodies (Cowell) + cannonball SRP with cylindrical eclipse. Per-force breakdown helper for diagnostics. |
+| `events` | Event detection during propagation (impact on central body, generic threshold crossings). |
+| `solver` | One-call wrappers around the integrator + force model context (e.g. propagate-until-end). |
+| `mission` | Top-level orchestration that ties a spacecraft, force model, integrator, and output stream into a single simulation. |
+| `io` | Buffered file I/O helpers for trajectory and diagnostic dumps. |
+| `math` | Shared math utilities (rotation matrices, vector ops). |
+| `mapping` | Cross-platform memory-mapped file I/O (used by `ephemeris`). |
+| `version` | Compile-time macros + runtime accessors for the library version, git hash (with `-dirty` flag), and build timestamp. |
 
 ---
 
@@ -55,18 +65,24 @@ Spody Core relies on standard, publicly available scientific datasets:
 
 ```
 spody-core/
-├── include/                # Public headers — include this folder in your build
-│   ├── spody_core.h        # Umbrella header (include this one)
-│   ├── spody_const.h       # Physical and numerical constants
+├── include/                  # Public headers — include this folder in your build
+│   ├── spody_core.h          # Umbrella header (include this one)
+│   ├── spody_const.h         # Physical and numerical constants
 │   ├── spody_eclipse.h
 │   ├── spody_ephemeris.h
+│   ├── spody_events.h
+│   ├── spody_forcemodels.h
 │   ├── spody_harmonics.h
 │   ├── spody_integrators.h
+│   ├── spody_io.h
 │   ├── spody_mapping.h
-│   └── spody_math.h
-├── src/                    # Implementation files (.c)
-├── tvb/                    # Tests, validations, and benchmarks
-├── raw_data/               # External datasets (DE440, GRGM1200A; see raw_data/README.md)
+│   ├── spody_math.h
+│   ├── spody_mission.h
+│   ├── spody_solver.h
+│   └── spody_version.h.in    # Template -> generated as spody_version.h at configure time
+├── src/                      # Implementation files (.c)
+├── raw_data/                 # External datasets (DE440, GRGM1200B; see raw_data/README.md)
+├── .github/workflows/        # CI (build matrix on linux / macos / windows)
 ├── CMakeLists.txt
 ├── LICENSE
 └── README.md
@@ -175,7 +191,6 @@ The `CMakeLists.txt` exposes a few flags you can toggle on the `cmake` command l
 | `SPODY_SILENCE_MSVC_CRT_WARNINGS` | `ON` | On MSVC, silences warnings about "unsafe" standard C functions (`strtok`, `sprintf`, ...). These are portable ISO C functions; the `_s` alternatives are non-portable Microsoft extensions. |
 | `SPODY_ENABLE_OMP_SIMD` | `OFF` | Activates `#pragma omp simd` hints in the harmonic-gravity hot loops (`/openmp:experimental` on MSVC, `-fopenmp-simd` on GCC/Clang). On GCC/Clang this enables explicit SIMD reduction for ~1.5× speedup at degree N≥50. On MSVC the macros expand to no-ops (front-end ignores `reduction` on `simd`); the flag is still useful because it changes the auto-vectorizer behaviour. |
 | `SPODY_VEC_REPORT` | `OFF` | Emits the compiler's auto-vectorization diagnostic at build time (`/Qvec-report:2` on MSVC, `-fopt-info-vec-all` on GCC, `-Rpass=loop-vectorize` on Clang). Useful while tuning hot loops. |
-| `SPODY_BUILD_TVB` | `OFF` | Builds the tests, validations, and benchmarks under [`tvb/`](tvb/). See [tvb/README.md](tvb/README.md). |
 
 **Example:** production build on MSVC (default):
 
@@ -258,6 +273,10 @@ The unsuffixed `spody_get_hgaccbodyfixed` is the algorithmic reference used as
 regression baseline; `_hpc` produces bit-equivalent results (rel error < 1e-12)
 and is the variant to call from a propagator's RHS.
 
+Both kernels return the **disturbing acceleration** (`-∇V_pert`, n≥2 only); the
+caller adds the result directly to `dvdt`. The two-body central term is summed
+separately and is provided by `spody_force_twobody`.
+
 **Numerical integrator** (RKDP45 adaptive on a 6-state two-body propagation):
 
 ```c
@@ -291,6 +310,27 @@ The integrator carries no global state; the per-thread `IntegratorAllData` holds
 the state vector, the RHS callback, an opaque user payload (typically containing
 shared pointers to ephemeris + gravity + per-thread handles), and the scratch
 buffers for the Runge-Kutta stages.
+
+### Version metadata
+
+Every build bakes in the project version, the short git SHA (with a `-dirty`
+suffix if the working tree had uncommitted changes), and the configure-time
+timestamp. Both compile-time macros and runtime accessors are exposed via
+`spody_version.h` (auto-pulled by the umbrella `spody_core.h`):
+
+```c
+#include "spody_core.h"
+
+#if SPODY_VERSION_MAJOR >= 1
+    /* compile-time gating */
+#endif
+
+printf("linked against spody-core %s  (git %s, built %s)\n",
+       spody_version(), spody_git_hash(), spody_build_timestamp());
+```
+
+The runtime functions return the strings baked into the **linked library**, not
+the consumer's headers, so any header/lib mismatch is detectable at startup.
 
 ---
 
