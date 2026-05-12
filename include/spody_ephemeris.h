@@ -54,10 +54,33 @@ extern "C" {
 #define BUFFER_SIZE_EPH 256
 #define EPH_CACHE_SLOTS 15
 
-typedef struct { // DE440 has 15 triplets
-    double start_epoch;
-    double end_epoch;
-    int days_per_record;
+/* On-disk magic string (exactly 8 bytes). The .spody binary format stores
+ * this at the very first bytes of the file so the loader can reject
+ * mismatching formats with a clear error. Naming follows the project-wide
+ * convention "SPDY" + 2-letter module ("EP" = ephemeris) + 2-letter variant.
+ *   "SPDYEPET" -> epochs are Ephemeris Time (seconds past J2000 TDB)
+ *   "SPDYEPJD" -> epochs are Julian Date (legacy, no longer produced) */
+#define SPODY_EPH_MAGIC_LEN     8
+#define SPODY_EPH_MAGIC_ET      "SPDYEPET"
+#define SPODY_EPH_MAGIC_JD      "SPDYEPJD"
+#define SPODY_EPH_FORMAT_VERSION 1u
+
+/* On-disk header. The first 16 bytes (magic + version + reserved) are at
+ * fixed offsets and let any reader identify the file kind without parsing
+ * the rest. Epoch fields are interpreted according to the magic:
+ *   - magic == SPDYEPET -> start_epoch, end_epoch in ET seconds past J2000
+ *                          seconds_per_record = (DE440 days_per_record) * 86400
+ *   - magic == SPDYEPJD -> start_epoch, end_epoch in Julian Date
+ *                          seconds_per_record = days_per_record (in days, legacy)
+ * The current spody_createfile_MappedEphemerisData writes only SPDYEPET. */
+typedef struct {                                       /* DE440 has 15 triplets */
+    char     magic[SPODY_EPH_MAGIC_LEN];               /* "SPDYEPET" / "SPDYEPJD" */
+    uint32_t format_version;                           /* SPODY_EPH_FORMAT_VERSION */
+    uint32_t reserved;                                 /* must be 0           */
+
+    double start_epoch;                                /* ET seconds (SPDYEPET) or JD (SPDYEPJD) */
+    double end_epoch;                                  /* same convention as start_epoch         */
+    int seconds_per_record;                            /* duration of one record (s for SPDYEPET, d for SPDYEPJD) */
     int bytes_per_record;
     int number_coefficients_per_record;
     int location[15];
@@ -65,10 +88,10 @@ typedef struct { // DE440 has 15 triplets
     int number_complete_sets_coefficients_per_record[15];
 }EphemerisFile_Header;
 
-typedef struct { 
+typedef struct {
     int record_number;
     int number_coefficients_per_record;
-    double start_epoch;
+    double start_epoch;                                /* ET seconds past J2000 (SPDEET format) */
     double end_epoch;
     double record[];
 }EphemerisFile_Record;
@@ -76,7 +99,11 @@ typedef struct {
 /* Shared, read-only ephemeris data: header and records point into the
  * memory-mapped file (or, for the partial setup, into private heap copies)
  * and are not mutated by query calls. A single MappedEphemerisData can be
- * safely shared across threads. */
+ * safely shared across threads.
+ *
+ * Time scale: epochs in the file are already in ET (Ephemeris Time, seconds
+ * past J2000 TDB) thanks to the SPDYEPET file format. The query API takes
+ * ET directly as its time argument; no runtime conversion is needed. */
 typedef struct {
     MappedFile mf;
     EphemerisFile_Header *header;
@@ -86,7 +113,7 @@ typedef struct {
 
 /* Per-thread query handle: holds a pointer to the shared (read-only)
  * MappedEphemerisData plus a private single-shot cache keyed by DE440
- * body index. If the same (idx, jd_epoch) is requested again on the same
+ * body index. If the same (idx, et) is requested again on the same
  * handle, the cached position is returned without re-evaluating Chebyshev.
  *
  * Threading model:
@@ -108,11 +135,13 @@ int spody_setup_MappedEphemeris(MappedEphemeris *map, MappedEphemerisData *med);
 int spody_free_MappedEphemeris(MappedEphemeris *map);
 int spody_free_MappedEphemerisData(MappedEphemerisData *med);
 
-int spody_get_ephposition(MappedEphemeris *map, int central_idx, int target_idx, double jd_epoch, double result[3]);
+/* Time argument: et = seconds past J2000 (TDB), the SPICE Ephemeris Time
+ * convention. Convert from a Julian Date with ET_FROM_JD(jd). */
+int spody_get_ephposition(MappedEphemeris *map, int central_idx, int target_idx, double et, double result[3]);
 /* Batch query: writes n_targets positions into a flat buffer of 3*n_targets
  * doubles, laid out as [x0,y0,z0, x1,y1,z1, ...]. Caller owns the buffer. */
-int spody_get_ephposition_batch(MappedEphemeris *map, int central_idx, const int *target_idx_array, int n_targets, double jd_epoch, double *result);
-int spody_get_lunarlibrationangles(MappedEphemeris *map, double jd_epoch, double result[3]);
+int spody_get_ephposition_batch(MappedEphemeris *map, int central_idx, const int *target_idx_array, int n_targets, double et, double *result);
+int spody_get_lunarlibrationangles(MappedEphemeris *map, double et, double result[3]);
     
 /* ICRF (J2000) -> Lunar body-fixed (PA frame)
  *

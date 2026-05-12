@@ -70,7 +70,10 @@ static int read_ephemeris_file_header(FILE *file, EphemerisFile_Header *ep ) {
                 } else if (ele == 1) {
                     ep->end_epoch = val; 
                 } else if (ele == 2) {
-                    ep->days_per_record = val; 
+                    /* ASCII gives days; we keep the value here temporarily
+                     * and convert to seconds (and ET for start/end) just
+                     * before writing the binary header. */
+                    ep->seconds_per_record = (int)val;
                 }
                 
                 printf("Ele %d: %f\n", ele, val);
@@ -164,13 +167,16 @@ static int read_record_block(FILE *fp, EphemerisFile_Header *ep, EphemerisFile_R
         }
     }
     printf("token loaded : %d\n",coeff_idx);
-    eprec->start_epoch = eprec->record[0];
-    eprec->end_epoch = eprec->record[1];
+    /* Convert the JD time bracket from the ASCII source to ET (seconds past
+     * J2000 TDB). The on-disk binary format (SPDEET) keeps record epochs in
+     * ET so the runtime never has to convert back. */
+    eprec->start_epoch = ET_FROM_JD(eprec->record[0]);
+    eprec->end_epoch   = ET_FROM_JD(eprec->record[1]);
 
-    return 1; //good 
+    return 1; //good
 }
 
-static int create_binary_ephemeris_file(EphemerisFile_Header *ep, int *old_epoch, const char *ascp_filename, const char *bin_filename) {
+static int create_binary_ephemeris_file(EphemerisFile_Header *ep, int64_t *old_epoch, const char *ascp_filename, const char *bin_filename) {
     printf("in create binary\n");
     FILE *fp_ascp = fopen(ascp_filename, "r");
     if (!fp_ascp) { perror("Errore file ascp"); return -1; }
@@ -203,19 +209,22 @@ static int create_binary_ephemeris_file(EphemerisFile_Header *ep, int *old_epoch
 
 
 
-        if (*old_epoch == (int) eprec->start_epoch ){ //eprec->record_number == 1 && ep->start_epoch != eprec->start_epoch && strcmp(bin_filename, "de440.spody") == 0
+        /* Detect duplicate records across consecutive ASCII chunks. ET values
+         * for adjacent records differ by at least seconds_per_record (~32 days
+         * = 2.7e6 s), so an int64 truncation is more than safe to compare. */
+        if (*old_epoch == (int64_t)eprec->start_epoch) {
             printf("\n\n! a clone record foud ! record %d start date %.2f \n\n",eprec->record_number, eprec->start_epoch);
             continue;
-        } 
-        *old_epoch = eprec->start_epoch;
-        printf("new old epoch : %d\n",*old_epoch);
+        }
+        *old_epoch = (int64_t)eprec->start_epoch;
+        printf("new old epoch : %lld\n", (long long)*old_epoch);
 
 
         printf("Writing record %d to binary file\n", eprec->record_number);
         printf("size of : %zu\n",record_size);
         fwrite(eprec, record_size, 1, fp_bin);
         printf("Written record %04d with %04d coefficients from %.6f to %.6f\n", eprec->record_number, eprec->number_coefficients_per_record, eprec->start_epoch, eprec->end_epoch);
-    
+
     }
     free(eprec);
     fclose(fp_ascp);
@@ -270,7 +279,7 @@ static double chebyshev_evaluate(double time_scaled, const double *coefficients,
  * Compute the position (X, Y, Z) of a celestial body at a given time.
  *
  * @param target_idx Index of the celestial body (0=Mercury, 1=Venus, ...) respect to @param ef.
- * @param jd_epoch Target Julian Date.
+ * @param et Target Ephemeris Time (seconds past J2000 TDB).
  * @param ef Ephemeris JPL file structure (from ASCII Header).
  * @param coeffs Array of coefficients from the ASCP file.
  * @param t_start Julian Date at the start of the current block.
@@ -279,11 +288,11 @@ static double chebyshev_evaluate(double time_scaled, const double *coefficients,
  * @return 1 if successful, 0 if the date is out of range or data is invalid.
  */
 
-static int calculate_body_position(MappedEphemeris *map, int target_idx, double jd_epoch, double result[3]) {
+static int calculate_body_position(MappedEphemeris *map, int target_idx, double et, double result[3]) {
 
     // cache hit: same body, same epoch -> skip record/set lookup and Chebyshev
     if (target_idx >= 0 && target_idx < EPH_CACHE_SLOTS &&
-        map->cache_valid[target_idx] && map->cache_jd[target_idx] == jd_epoch) {
+        map->cache_valid[target_idx] && map->cache_jd[target_idx] == et) {
         result[0] = map->cache_pos[target_idx][0];
         result[1] = map->cache_pos[target_idx][1];
         result[2] = map->cache_pos[target_idx][2];
@@ -292,74 +301,52 @@ static int calculate_body_position(MappedEphemeris *map, int target_idx, double 
 
     MappedEphemerisData *med = map->med;
 
-    #if DEBUG_EPHEMERIS == 1
-    printf("\n");
-    for(int i=0;i<15;i++){
-        printf("bodies mapped idx %02d | location %04d | n coeff per comp %02d | n sets per record %d\n", i+1, med->header->location[i], med->header->number_coefficients_per_component[i], med->header->number_complete_sets_coefficients_per_record[i]);
-    }
-    #endif
-
     // 1. Retrieve body parameters
     int numeber_coefficients_per_component = med->header->number_coefficients_per_component[target_idx];
     int start_index = med->header->location[target_idx] - 1; // 1-based -> 0-based
-    int n_components = 3; // X, Y, Z <--- not to flexible!!!!
+    int n_components = 3; // X, Y, Z
 
-    // 2. Subdivision identification
-    int record_id = (int)floor((jd_epoch - med->header->start_epoch)/med->header->days_per_record);
-    //printf("Record ID calc: %d\n", record_id);
+    // 2. Subdivision identification (all values already in ET seconds since
+    //    the SPDEET file format is ET-native: header epochs and per-record
+    //    epochs are stored as `seconds past J2000 TDB`). Subtractions stay
+    //    between magnitudes ~1e9 with ULP ~200 ns, ~250x better than JD.
+    int record_id = (int)floor((et - med->header->start_epoch) / med->header->seconds_per_record);
+
     EphemerisFile_Record *eprec = med->records[record_id];
-    double block_duration = eprec->end_epoch - eprec->start_epoch;
-    double set_duration = block_duration / med->header->number_complete_sets_coefficients_per_record[target_idx];
-    int set_id = (int)floor((jd_epoch - eprec->start_epoch) / set_duration); //wich subdivision we need
-
-    #if DEBUG_EPHEMERIS == 1
-    printf("Record ID: %d | Start epoch header: %f | start epoch record [%d]: %f | JD epoch now : %f \n", record_id, med->header->start_epoch, record_id, med->records[record_id]->start_epoch, jd_epoch);
-    printf("Set ID: %d\n", set_id);
-    #endif
+    double rec_start = eprec->start_epoch;
+    double rec_end   = eprec->end_epoch;
+    double block_duration = rec_end - rec_start;
+    int n_sets = med->header->number_complete_sets_coefficients_per_record[target_idx];
+    double set_duration = block_duration / (double)n_sets;
+    int set_id = (int)floor((et - rec_start) / set_duration);
 
     // floating point error check
-    if (set_id >= med->header->number_complete_sets_coefficients_per_record[target_idx]) {
-        set_id = med->header->number_complete_sets_coefficients_per_record[target_idx] - 1;
+    if (set_id >= n_sets) {
+        set_id = n_sets - 1;
         printf("Adjusted Set ID due to floating point error: %d\n", set_id);
-    }  // we can do this because jd_epoch <= t_end
+    }
 
-    // 3. Tau evaluation 
-    double t_gran_start = eprec->start_epoch + set_id * set_duration;
-    double t_gran_end = t_gran_start + set_duration;
-    
-    // normalizing of tau --> [-1.0, 1.0] 
-    double tau = (2.0 * jd_epoch - t_gran_start - t_gran_end) / (t_gran_end - t_gran_start); // prob not the best for floting point error 
-    double midpoint = 0.5 * (t_gran_start + t_gran_end);
-    double half_range = 0.5 * (t_gran_end - t_gran_start);
-    //double tau2 = (jd_epoch - midpoint) / half_range; //TBD with some tests
-    
-    #if DEBUG_EPHEMERIS == 1
-    printf("Subdivision number: %d|%d, Tau: LP %.21f HP %.21f\n", set_id,map->header->number_complete_sets_coefficients_per_record[target_idx], tau, tau2);
-    printf("Gran Start Time: %f | Gran End Time: %f\n",t_gran_start , t_gran_end);
-    #endif
+    // 3. Tau evaluation
+    double t_gran_start = rec_start + set_id * set_duration;
+    double t_gran_end   = t_gran_start + set_duration;
 
-    // 4. Buffer param    
+    // normalizing of tau --> [-1.0, 1.0]
+    double tau = (2.0 * et - t_gran_start - t_gran_end) / (t_gran_end - t_gran_start);
+
+    // 4. Buffer param
     // a complete set (X, Y, Z) per set_id is 3 * n_coeffs.
-    int set_length = n_components * numeber_coefficients_per_component; 
+    int set_length = n_components * numeber_coefficients_per_component;
     int offset = start_index + (set_id * set_length);
 
-    // 5. Polinomial evaluation for X, Y, Z
+    // 5. Polynomial evaluation for X, Y, Z
     for (int i = 0; i < n_components; i++) {
-        // X ---> offset
-        // Y ---> offset + n_coeffs
-        // Z ---> offset + 2 * n_coeffs
-
-        #if DEBUG_EPHEMERIS == 1
-        printf("Calculating component %d with coeffs starting at index %d\n", i, offset + (i * numeber_coefficients_per_component));
-        #endif
-
         const double *coeff_ptr = eprec->record + offset + (i * numeber_coefficients_per_component);
         result[i] = chebyshev_evaluate(tau, coeff_ptr, numeber_coefficients_per_component);
     }
 
-    // store in cache
+    // store in cache (cache_jd field is now keyed by ET, name kept for layout stability)
     if (target_idx >= 0 && target_idx < EPH_CACHE_SLOTS) {
-        map->cache_jd[target_idx] = jd_epoch;
+        map->cache_jd[target_idx] = et;
         map->cache_pos[target_idx][0] = result[0];
         map->cache_pos[target_idx][1] = result[1];
         map->cache_pos[target_idx][2] = result[2];
@@ -385,10 +372,22 @@ static int ephemeris_map_file(MappedEphemerisData *med, const char *filename) {
     printf("mf_size : %zu\n",med->mf.size);
     printf("sizeof(EphemerisFile_Header) : %zu\n",sizeof(EphemerisFile_Header));
 
+    /* Validate the on-disk format: magic SPDEET + supported version. */
+    if (memcmp(med->header->magic, SPODY_EPH_MAGIC_ET, SPODY_EPH_MAGIC_LEN) != 0) {
+        printf("ephemeris_map_file: bad magic (got '%.8s', expected '%.8s'). "
+               "Regenerate the .spody binary with the current spody_createfile_*.\n",
+               med->header->magic, SPODY_EPH_MAGIC_ET);
+        return -10;
+    }
+    if (med->header->format_version != SPODY_EPH_FORMAT_VERSION) {
+        printf("ephemeris_map_file: unsupported format_version %u (expected %u)\n",
+               (unsigned)med->header->format_version,
+               (unsigned)SPODY_EPH_FORMAT_VERSION);
+        return -11;
+    }
+
     size_t remaining_bytes = med->mf.size - sizeof(EphemerisFile_Header);
     printf("remaning bytes : %zu \n",remaining_bytes);
-
-
 
     med->num_records = remaining_bytes / med->header->bytes_per_record; //we hope it is exact division
 
@@ -398,28 +397,25 @@ static int ephemeris_map_file(MappedEphemerisData *med, const char *filename) {
     #endif
 
     med->records = (EphemerisFile_Record**)malloc(sizeof(EphemerisFile_Record*) * med->num_records);
-    if (!med->records) return -3; //malloc error
+    if (!med->records) return -3;
 
-    uint8_t *ptr = (uint8_t*)med->mf.ptr + sizeof(EphemerisFile_Header); //work on bytes
+    uint8_t *ptr = (uint8_t*)med->mf.ptr + sizeof(EphemerisFile_Header);
     for (size_t i = 0; i < med->num_records; i++) {
-        //printf("Mapping record %zu at address %p\n", i, ptr);
         med->records[i] = (EphemerisFile_Record*)ptr;
         #if DEBUG_EPHEMERIS == 1
         printf("Mapped record %zu: record number %d, n_coeff %d, start_epoch %.6f, end_epoch %.6f\n", i+1, med->records[i]->record_number, med->records[i]->number_coefficients_per_record, med->records[i]->start_epoch, med->records[i]->end_epoch);
         #endif
-        size_t record_bytes = med->header->bytes_per_record;
-        //printf("record_bytes : %zu\n",record_bytes);
-        ptr += record_bytes;
+        ptr += med->header->bytes_per_record;
     }
 
+    /* No runtime conversion needed: epochs in the file are already ET. */
     return 0;
 }
 
 static int ephemeris_unmap_file(MappedEphemerisData *med) {
     if (!med) return -1;
 
-    free(med->records);
-    med->records = NULL;
+    free(med->records); med->records = NULL;
     med->header = NULL;
     med->num_records = 0;
 
@@ -439,8 +435,10 @@ int spody_createfile_MappedEphemerisData(const char *path, const char **file_nam
 
     FILE *file = fopen(header_path,"r");
     if (!file) { perror("Errore file header"); return -1; }
-    
-    FILE *fp_bin = fopen(bin_filename, "ab");  // "ab" for append mode
+
+    /* Truncate the destination on first open: avoids accidental append
+     * to a previous run. Subsequent record writes use "ab". */
+    FILE *fp_bin = fopen(bin_filename, "wb");
     if (!fp_bin) { perror("Errore file bin"); fclose(file); return -1; }
 
     EphemerisFile_Header ep = {0};
@@ -449,27 +447,34 @@ int spody_createfile_MappedEphemerisData(const char *path, const char **file_nam
 
     size_t n = ep.number_coefficients_per_record;
     size_t record_size = sizeof(EphemerisFile_Record) + n * sizeof(double);
-    ep.bytes_per_record = (int)record_size; //TBD update record size in header necessary understand KSIZE param
+    ep.bytes_per_record = (int)record_size;
     printf("ep.bytes_per_record : %d\n",ep.bytes_per_record);
 
-        //first write header info
+    /* Convert the header epochs from the ASCII (JD, days) source to the
+     * SPDEET on-disk format (ET, seconds). */
+    memcpy(ep.magic, SPODY_EPH_MAGIC_ET, SPODY_EPH_MAGIC_LEN);
+    ep.format_version    = SPODY_EPH_FORMAT_VERSION;
+    ep.reserved          = 0;
+    ep.start_epoch       = ET_FROM_JD(ep.start_epoch);
+    ep.end_epoch         = ET_FROM_JD(ep.end_epoch);
+    ep.seconds_per_record = ep.seconds_per_record * SECONDSxDAY;
+
+    /* first write header info */
     fwrite(&ep, sizeof(EphemerisFile_Header), 1, fp_bin);
     fclose(fp_bin);
-    
-    printf("header writed, size : %zu\n",sizeof(EphemerisFile_Header));
 
-    int old_epoch = 1 ; //necessary to avoid duplicate 
+    printf("header writed, size : %zu (magic=%.8s, version=%u)\n",
+           sizeof(EphemerisFile_Header), ep.magic, (unsigned)ep.format_version);
+
+    int64_t old_epoch = 1; /* necessary to avoid duplicate; ET values fit easily in int64 */
 
     for (int i = 0; i < n_files; i++){
-        
-        sprintf(ascp_filename, "./%s/ascp%s.%s",path,file_names[i],de); 
-        //FILE *file = fopen(ascp_filename,"r");
-        //if (!file) { perror("Errore file ASCP"); return -1; }
-        
-        returnNumber = create_binary_ephemeris_file(&ep,&old_epoch,ascp_filename,bin_filename); //TBD the append mode in create_binary_ephemeris_file
-        printf("old epoch : %d\n",old_epoch);
 
-        fclose(file);
+        sprintf(ascp_filename, "./%s/ascp%s.%s",path,file_names[i],de);
+
+        returnNumber = create_binary_ephemeris_file(&ep,&old_epoch,ascp_filename,bin_filename);
+        printf("old epoch : %lld\n",(long long)old_epoch);
+
         printf("\n\nfile %d writed\n",i);
 
     }
@@ -534,26 +539,26 @@ int spody_free_MappedEphemerisData(MappedEphemerisData *med){
      except for Earth/Moon, handled explicitly via EMRAT)
 ********************************************/
 
-static int get_body_position_ssb(MappedEphemeris *map, int naif_id, double jd_epoch, double result[3]){
+static int get_body_position_ssb(MappedEphemeris *map, int naif_id, double et, double result[3]){
     double temp[3];
     switch (naif_id) {
     case 0:
         result[0] = 0.0; result[1] = 0.0; result[2] = 0.0;
         return 0;
-    case 1: case 199: return calculate_body_position(map, 0,  jd_epoch, result);
-    case 2: case 299: return calculate_body_position(map, 1,  jd_epoch, result);
-    case 3:           return calculate_body_position(map, 2,  jd_epoch, result);
-    case 4: case 499: return calculate_body_position(map, 3,  jd_epoch, result);
-    case 5: case 599: return calculate_body_position(map, 4,  jd_epoch, result);
-    case 6: case 699: return calculate_body_position(map, 5,  jd_epoch, result);
-    case 7: case 799: return calculate_body_position(map, 6,  jd_epoch, result);
-    case 8: case 899: return calculate_body_position(map, 7,  jd_epoch, result);
-    case 9: case 999: return calculate_body_position(map, 8,  jd_epoch, result);
-    case 10:          return calculate_body_position(map, 10, jd_epoch, result);
+    case 1: case 199: return calculate_body_position(map, 0,  et, result);
+    case 2: case 299: return calculate_body_position(map, 1,  et, result);
+    case 3:           return calculate_body_position(map, 2,  et, result);
+    case 4: case 499: return calculate_body_position(map, 3,  et, result);
+    case 5: case 599: return calculate_body_position(map, 4,  et, result);
+    case 6: case 699: return calculate_body_position(map, 5,  et, result);
+    case 7: case 799: return calculate_body_position(map, 6,  et, result);
+    case 8: case 899: return calculate_body_position(map, 7,  et, result);
+    case 9: case 999: return calculate_body_position(map, 8,  et, result);
+    case 10:          return calculate_body_position(map, 10, et, result);
     case 399: {
         // Earth_ssb = EMB_ssb - 1/(1+EMRAT) * r_moon_earth
-        calculate_body_position(map, 2, jd_epoch, result);
-        calculate_body_position(map, 9, jd_epoch, temp);
+        calculate_body_position(map, 2, et, result);
+        calculate_body_position(map, 9, et, temp);
         double f = -1.0 / (1.0 + EMRAT);
         result[0] += f * temp[0];
         result[1] += f * temp[1];
@@ -562,8 +567,8 @@ static int get_body_position_ssb(MappedEphemeris *map, int naif_id, double jd_ep
     }
     case 301: {
         // Moon_ssb = EMB_ssb + EMRAT/(1+EMRAT) * r_moon_earth
-        calculate_body_position(map, 2, jd_epoch, result);
-        calculate_body_position(map, 9, jd_epoch, temp);
+        calculate_body_position(map, 2, et, result);
+        calculate_body_position(map, 9, et, temp);
         double f = EMRAT / (1.0 + EMRAT);
         result[0] += f * temp[0];
         result[1] += f * temp[1];
@@ -576,14 +581,14 @@ static int get_body_position_ssb(MappedEphemeris *map, int naif_id, double jd_ep
     }
 }
 
-int spody_get_ephposition(MappedEphemeris *map, int central_idx, int target_idx, double jd_epoch, double result[3]){
+int spody_get_ephposition(MappedEphemeris *map, int central_idx, int target_idx, double et, double result[3]){
 
     // fast path: Earth <-> Moon uses a single Chebyshev evaluation
     if (central_idx == 399 && target_idx == 301) {
-        return calculate_body_position(map, 9, jd_epoch, result);
+        return calculate_body_position(map, 9, et, result);
     }
     if (central_idx == 301 && target_idx == 399) {
-        calculate_body_position(map, 9, jd_epoch, result);
+        calculate_body_position(map, 9, et, result);
         result[0] = -result[0];
         result[1] = -result[1];
         result[2] = -result[2];
@@ -591,11 +596,11 @@ int spody_get_ephposition(MappedEphemeris *map, int central_idx, int target_idx,
     }
 
     double central[3];
-    if (get_body_position_ssb(map, target_idx, jd_epoch, result) < 0) {
+    if (get_body_position_ssb(map, target_idx, et, result) < 0) {
         printf("Target body not supported\n");
         return -1;
     }
-    if (get_body_position_ssb(map, central_idx, jd_epoch, central) < 0) {
+    if (get_body_position_ssb(map, central_idx, et, central) < 0) {
         printf("Central body not supported\n");
         result[0] = 0.0; result[1] = 0.0; result[2] = 0.0;
         return -1;
@@ -606,13 +611,13 @@ int spody_get_ephposition(MappedEphemeris *map, int central_idx, int target_idx,
     return 0;
 }
 
-int spody_get_ephposition_batch(MappedEphemeris *map, int central_idx, const int *target_idx_array, int n_targets, double jd_epoch, double *result){
+int spody_get_ephposition_batch(MappedEphemeris *map, int central_idx, const int *target_idx_array, int n_targets, double et, double *result){
     // Flat buffer layout: result[3*i + 0..2] is (x,y,z) for target i.
     // Central body is SSB-reduced once; all targets reuse it.
     // Further deduplication (e.g. EMB+Moon_geo shared across Earth/Moon requests)
     // is handled automatically by the per-body cache in calculate_body_position.
     double central[3];
-    if (get_body_position_ssb(map, central_idx, jd_epoch, central) < 0) {
+    if (get_body_position_ssb(map, central_idx, et, central) < 0) {
         printf("Central body not supported\n");
         for (int i = 0; i < 3 * n_targets; i++) result[i] = 0.0;
         return -1;
@@ -621,7 +626,7 @@ int spody_get_ephposition_batch(MappedEphemeris *map, int central_idx, const int
     for (int i = 0; i < n_targets; i++) {
         double target_ssb[3];
         double *out = result + 3 * i;
-        if (get_body_position_ssb(map, target_idx_array[i], jd_epoch, target_ssb) < 0) {
+        if (get_body_position_ssb(map, target_idx_array[i], et, target_ssb) < 0) {
             printf("Target body %d not supported\n", target_idx_array[i]);
             out[0] = 0.0; out[1] = 0.0; out[2] = 0.0;
             continue;
@@ -633,9 +638,9 @@ int spody_get_ephposition_batch(MappedEphemeris *map, int central_idx, const int
     return 0;
 }
 
-int spody_get_lunarlibrationangles(MappedEphemeris *map, double jd_epoch, double result[3]){
+int spody_get_lunarlibrationangles(MappedEphemeris *map, double et, double result[3]){
     
-    calculate_body_position(map, 12, jd_epoch, result);
+    calculate_body_position(map, 12, et, result);
 
     return 0; 
 
@@ -723,55 +728,41 @@ int spody_setup_partialMappedEphemeris(MappedEphemeris *map, const char *filenam
 }
 */
 
-int spody_setup_partialMappedEphemerisData(MappedEphemerisData *med, const char *filename, double in_start, double in_end){
+int spody_setup_partialMappedEphemerisData(MappedEphemerisData *med, const char *filename, double in_start_et, double in_end_et){
 
-    //TBD necessary a free function but now we end the program for memory free
+    /* Loads the same .spody file as spody_setup_MappedEphemerisData but
+     * keeps in memory only the records covering [in_start_et, in_end_et]
+     * (in ET seconds past J2000). Useful for missions of bounded duration
+     * on memory-constrained targets. */
 
     MappedEphemerisData full = {0};
     if (ephemeris_map_file(&full, filename) != 0) return -1;
 
-    int record_id_start = (int)floor((in_start - full.header->start_epoch)/full.header->days_per_record);
-    int record_id_end = (int)floor((in_end - full.header->start_epoch)/full.header->days_per_record);
-    int number_of_records = (record_id_end - record_id_start) + 1; // is alway + 1 wrt the difference
-    if (number_of_records <= 0) return -4;
+    int record_id_start = (int)floor((in_start_et - full.header->start_epoch) / (double)full.header->seconds_per_record);
+    int record_id_end   = (int)floor((in_end_et   - full.header->start_epoch) / (double)full.header->seconds_per_record);
+    int n = (record_id_end - record_id_start) + 1;
+    if (n <= 0) { ephemeris_unmap_file(&full); return -4; }
 
-    printf("start : %.6f | end : %.6f\n", in_start, in_end);
-    printf("record_id_start : %d | record_id_end : %d \nnumber_of_reccords : %d\n", record_id_start, record_id_end, number_of_records);
-
+    /* private copy of header + records (the full mmap will be unmapped) */
     med->header = malloc(sizeof(EphemerisFile_Header));
+    if (!med->header) { ephemeris_unmap_file(&full); return -3; }
     *med->header = *full.header;
 
-    med->records = (EphemerisFile_Record**)malloc(sizeof(EphemerisFile_Record*) * number_of_records);
-    if (!med->records) return -3; //malloc error
+    med->records = (EphemerisFile_Record**)malloc(sizeof(EphemerisFile_Record*) * n);
+    if (!med->records) { ephemeris_unmap_file(&full); return -3; }
 
-    for(int i = 0; i < number_of_records; i++ ) {
+    for (int i = 0; i < n; i++) {
         size_t sz = med->header->bytes_per_record;
         med->records[i] = malloc(sz);
+        if (!med->records[i]) { ephemeris_unmap_file(&full); return -3; }
         memcpy(med->records[i], full.records[record_id_start + i], sz);
-        printf("record start epoch : %.6f",med->records[i]->start_epoch);
-        med->records[i]->start_epoch -= in_start;
-        med->records[i]->start_epoch *= SECONDSxDAY;
-        printf("record start epoch : %.6f ",med->records[i]->end_epoch);
-        med->records[i]->end_epoch -= in_start;
-        med->records[i]->end_epoch *= SECONDSxDAY;
-
-        printf("%zu bytes copied\n",sz);
     }
+    med->num_records = (size_t)n;
 
-    med->num_records = number_of_records;
-    med->header->days_per_record *= SECONDSxDAY ; //now we are working with seconds
+    /* refresh header epochs to the actual subset range (still in ET) */
     med->header->start_epoch = med->records[0]->start_epoch;
-    med->header->end_epoch = med->records[ med->num_records - 1 ]->end_epoch;
+    med->header->end_epoch   = med->records[n - 1]->end_epoch;
 
-    printf("med->header->days_per_record (seconds_per_record) : %d\n",med->header->days_per_record);
-    printf("med->num_records : %zu \nmed->header->start_epoch : %f | med->records[0]->start_epoch : %f \nmed->header->end_epoch : %f | med->records[med->num_records - 1]->end_epoch : %f\n", med->num_records, med->header->start_epoch, med->records[0]->start_epoch, med->header->end_epoch, med->records[med->num_records - 1]->end_epoch);
-    printf("size of entire allocatedd memory for the data : %zu \n", sizeof(MappedEphemerisData) + sizeof(EphemerisFile_Header) + sizeof(EphemerisFile_Record*) * number_of_records + number_of_records * med->header->bytes_per_record);
-    printf("size of data only : %zu\n", sizeof(MappedEphemerisData));
-    printf("size of header : %zu\n", sizeof(EphemerisFile_Header));
-    printf("size of records pointers array : %zu\n", sizeof(EphemerisFile_Record*) * number_of_records);
-    printf("size of all records stored : %d\n", number_of_records * med->header->bytes_per_record);
     ephemeris_unmap_file(&full);
-
-
     return 0;
 }

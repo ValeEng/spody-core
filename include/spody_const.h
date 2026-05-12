@@ -22,9 +22,19 @@ extern "C" {
 
 
     // Constants
-#define JD_JAN_2000 2451545.0 // Julian Date at J2000 epoch
+#define JD_JAN_2000 2451545.0 // Julian Date at J2000 epoch (alias: JD_J2000)
+#define JD_J2000    2451545.0 // explicit name for the SPICE-style ET origin
 #define PI 3.14159265358979323846264338327950288419716939937511
-#define SOLAR_LUMINOSITY_4PIC 1.016111489628894e+08 // Watts divided 4pi*c*10^9 | we can use r in km and am in m^2/kg 
+#define SOLAR_LUMINOSITY_4PIC 1.016111489628894e+08 // Watts divided 4pi*c*10^9 | we can use r in km and am in m^2/kg
+
+    // SPICE-style Ephemeris Time:
+    //   ET = seconds (TDB) past J2000 (1 Jan 2000 12:00:00 TDB).
+    // ET is the canonical internal time scale for SPODY: same units as the
+    // integrator (seconds), centred near today (magnitude ~8e8 in 2026 ->
+    // ULP ~183 ns, ~250x better than full JD's 47 us). Negative ET values
+    // are valid (epoch before J2000) and pose no precision concerns.
+#define ET_FROM_JD(jd) ( ((jd) - JD_J2000) * SECONDSxDAY )
+#define JD_FROM_ET(et) ( JD_J2000 + (et) / SECONDSxDAY )
 
 
     //Radiation pressure coefficients (from Montenbruck and Gill)
