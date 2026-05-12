@@ -184,7 +184,7 @@ spody_free_HarmonicGravityData(&hgd);
 > | **150** | **sweet spot for LLO/LRO** — ~95% of the residual reduction of N=200 at half the cost |
 > | 200 | high-fidelity floor; beyond ~200 the GRGM1200B coefficients become weakly observed and adding terms can slightly *increase* the mean drift |
 >
-> Cost scales as ~N². Indicative timings on GCC/Ryzen with `SPODY_ENABLE_OMP_SIMD=ON`: N=80 → 3 s for a 6-day LRO propagation, N=150 → 12 s, N=200 → 23 s.
+> Cost scales as ~N². Indicative timings for a 6-day LRO propagation on a desktop x86-64 in Release: N=80 → ~3 s, N=150 → ~12 s, N=200 → ~23 s. Absolute numbers depend on CPU and compiler; the relative scaling holds.
 
 > **`_hpc` vs reference:** `spody_get_hgaccbodyfixed_hpc` is the production-grade variant (branch-free + peeled inner loops + restrict-tagged pointers + `#pragma omp simd reduction` on GCC/Clang). It produces results bit-equivalent to the reference (rel error < 1e-12) and is ~1.5–1.7× faster on GCC/Clang at N≥50. Use it inside the RHS of a propagator; keep the reference for regression tests and audit.
 
