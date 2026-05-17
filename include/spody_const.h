@@ -68,6 +68,19 @@ extern "C" {
 #define NEPTUNE_MU 6836534.0638793
 #define PLUTO_MU 981.60088770700
 
+    //radii [km] (from pck00011, there is some additional iformation)
+#define MOON_RADIUS 1737.4 //from SPICE | OLD 1.7374e6 // m
+#define EARTH_RADIUS 6378.1366 //from SPICE | OLD 6.371e6 // m
+#define SUN_RADIUS 695700 //from SPICE | OLD 6.9634e8 // m 
+#define MARS_RADIUS 3376.20
+#define MERCURY_RADIUS 2440.53
+#define VENUS_RADIUS 6051.8
+#define JUPITER_RADIUS 71492
+#define SATURN_RADIUS 60268
+#define URANUS_RADIUS 25559
+#define NEPTUNE_RADIUS 24764
+#define PLUTO_RADIUS 1195
+
 #define EMRAT 0.813005682214972154E+02 //TBD from JPL DE440
 
 #ifdef __cplusplus
