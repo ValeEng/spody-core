@@ -53,7 +53,9 @@ static int read_spherical_harmonics_file(FILE *file, HarmonicGravityData *pm, in
     }
     pm->N = (degree <= (int)file_N) ? degree : (int)file_N;
 
+    #if DEBUG_HARMONICS == 1
     printf("\n\nR_ref = %f | GM = %.10e | N_used = %d\n\n", pm->R_ref, pm->GM, pm->N);
+    #endif
 
     int size = (pm->N + 2) * (pm->N + 3) / 2;
     pm->C = calloc(size, sizeof(double)); // calloc init to 0

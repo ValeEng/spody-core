@@ -369,8 +369,10 @@ static int ephemeris_map_file(MappedEphemerisData *med, const char *filename) {
     //printf("Mapped header end epoch: %.6f\n", med->header->end_epoch);
     //printf("bytes per record: %d\n", med->header->bytes_per_record);
 
+    #if DEBUG_EPHEMERIS == 1
     printf("mf_size : %zu\n",med->mf.size);
     printf("sizeof(EphemerisFile_Header) : %zu\n",sizeof(EphemerisFile_Header));
+    #endif
 
     /* Validate the on-disk format: magic SPDEET + supported version. */
     if (memcmp(med->header->magic, SPODY_EPH_MAGIC_ET, SPODY_EPH_MAGIC_LEN) != 0) {
@@ -387,7 +389,9 @@ static int ephemeris_map_file(MappedEphemerisData *med, const char *filename) {
     }
 
     size_t remaining_bytes = med->mf.size - sizeof(EphemerisFile_Header);
+    #if DEBUG_EPHEMERIS == 1
     printf("remaning bytes : %zu \n",remaining_bytes);
+    #endif
 
     med->num_records = remaining_bytes / med->header->bytes_per_record; //we hope it is exact division
 
