@@ -118,6 +118,7 @@ set(SOURCES
     src/spody_forcemodels.c
     src/spody_harmonics.c
     src/spody_integrators.c
+    src/spody_interp.c
     src/spody_io.c
     src/spody_mapping.c
     src/spody_math.c
