@@ -470,7 +470,7 @@ int spody_load_HarmonicGravityData(HarmonicGravityData *hgd, const char *filenam
 
 }
 
-int spody_setup_HarmonicGravity(HarmonicGravity *hg, HarmonicGravityData *hgd){
+int spody_setup_HarmonicGravity(HarmonicGravity *hg, const HarmonicGravityData *hgd){
     //TBD clean sizes to improve memory usage e performance
     // we have allocated more memory than necessary for simplicity (N+2)
     

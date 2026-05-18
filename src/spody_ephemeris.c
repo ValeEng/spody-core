@@ -299,7 +299,7 @@ static int calculate_body_position(MappedEphemeris *map, int target_idx, double 
         return 1;
     }
 
-    MappedEphemerisData *med = map->med;
+    const MappedEphemerisData *med = map->med;
 
     // 1. Retrieve body parameters
     int numeber_coefficients_per_component = med->header->number_coefficients_per_component[target_idx];
@@ -507,7 +507,7 @@ int spody_setup_MappedEphemerisData(MappedEphemerisData *med, const char *filena
     return returnNumber;
 }
 
-int spody_setup_MappedEphemeris(MappedEphemeris *map, MappedEphemerisData *med){
+int spody_setup_MappedEphemeris(MappedEphemeris *map, const MappedEphemerisData *med){
     if (!map || !med) return -1;
     map->med = med;
     for (int i = 0; i < EPH_CACHE_SLOTS; i++) map->cache_valid[i] = 0;

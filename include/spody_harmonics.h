@@ -53,7 +53,7 @@ typedef struct {
 } HarmonicGravityData;
 
 typedef struct {
-    HarmonicGravityData *hgd;
+    const HarmonicGravityData *hgd;
     double *A_row0; // Row n+1 (future)
     double *A_row1; // Row n (current)
     double *A_row2; // Row n-1 (previus)
@@ -78,7 +78,7 @@ void spody_get_hgaccbodyfixed(HarmonicGravity *hg, double pos[3], double acc_out
 void spody_get_hgaccbodyfixed_hpc(HarmonicGravity *hg, double pos[3], double acc_out[3]);
 
 int spody_load_HarmonicGravityData(HarmonicGravityData *hgd, const char *filename, int degree);
-int spody_setup_HarmonicGravity(HarmonicGravity *hg, HarmonicGravityData *hgd);
+int spody_setup_HarmonicGravity(HarmonicGravity *hg, const HarmonicGravityData *hgd);
 int spody_free_HarmonicGravity(HarmonicGravity *hg);
 int spody_free_HarmonicGravityData(HarmonicGravityData *hgd);
 

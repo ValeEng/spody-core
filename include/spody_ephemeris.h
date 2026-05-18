@@ -122,7 +122,7 @@ typedef struct {
  *     shared MappedEphemerisData and calls the query functions with it.
  *   - Never share the same MappedEphemeris across threads. */
 typedef struct {
-    MappedEphemerisData *med;
+    const MappedEphemerisData *med;
     double cache_jd[EPH_CACHE_SLOTS];
     double cache_pos[EPH_CACHE_SLOTS][3];
     int cache_valid[EPH_CACHE_SLOTS];
@@ -131,7 +131,7 @@ typedef struct {
 int spody_createfile_MappedEphemerisData(const char *path, const char **file_names, const int n_files, const char *de);
 int spody_setup_MappedEphemerisData(MappedEphemerisData *med, const char *filename);
 int spody_setup_partialMappedEphemerisData(MappedEphemerisData *med, const char *filename, double in_start, double in_end);
-int spody_setup_MappedEphemeris(MappedEphemeris *map, MappedEphemerisData *med);
+int spody_setup_MappedEphemeris(MappedEphemeris *map, const MappedEphemerisData *med);
 int spody_free_MappedEphemeris(MappedEphemeris *map);
 int spody_free_MappedEphemerisData(MappedEphemerisData *med);
 
