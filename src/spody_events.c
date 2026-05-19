@@ -17,6 +17,11 @@
 #include <string.h>
 #include "spody_events.h"
 #include "spody_solver.h"
+#include "spody_eclipse.h"   /* spody_get_sateclipsestatus */
+#include "spody_const.h"     /* SUN_RADIUS                  */
+
+/* NAIF id of the Sun in DE440 (centre of mass). */
+#define SPODY_SUN_NAIF_ID 10
 
 SpodyEvent spody_event_impact(int naif_id, double radius_km, spody_event_action action) {
     SpodyEvent ev;
@@ -26,6 +31,19 @@ SpodyEvent spody_event_impact(int naif_id, double radius_km, spody_event_action 
     ev.naif_id    = naif_id;
     ev.radius_km  = radius_km;
     ev.prev_valid = 0;
+    return ev;
+}
+
+SpodyEvent spody_event_eclipse(int occulter_naif_id, double occulter_radius_km,
+                               double threshold_fraction, spody_event_action action) {
+    SpodyEvent ev;
+    memset(&ev, 0, sizeof(ev));
+    ev.kind               = SPODY_EVENT_KIND_ECLIPSE;
+    ev.action             = action;
+    ev.naif_id            = occulter_naif_id;
+    ev.radius_km          = occulter_radius_km;
+    ev.threshold_fraction = threshold_fraction;
+    ev.prev_valid         = 0;
     return ev;
 }
 
@@ -51,6 +69,40 @@ static double impact_distance2(const SpodyEvent *ev,
     return dx*dx + dy*dy + dz*dz;
 }
 
+/* Sun-lit fraction at state (t, y) given the event's occulting body.
+ * Wraps spody_get_sateclipsestatus by setting up the three central-frame
+ * vectors the math wants:
+ *   occulting2sat -- from occulter to satellite
+ *   occulting2sun -- from occulter to Sun
+ *   sat2sun       -- from satellite to Sun
+ * The Sun is queried from the ephemeris in the central frame (NAIF 10).
+ * If the occulter is the central body the offset is zero. */
+static double eclipse_fraction(const SpodyEvent *ev,
+                               const ForceModelContext *ctx,
+                               double t, const double *y)
+{
+    if (!ctx->eph) return 1.0;   /* no ephemeris: pretend fully lit */
+    double et = ctx->et0 + t;
+
+    double occ_pos_central[3] = { 0.0, 0.0, 0.0 };
+    if (ev->naif_id != ctx->naif_central) {
+        spody_get_ephposition(ctx->eph, ctx->naif_central, ev->naif_id,
+                              et, occ_pos_central);
+    }
+    double sun_pos_central[3] = { 0.0, 0.0, 0.0 };
+    spody_get_ephposition(ctx->eph, ctx->naif_central, SPODY_SUN_NAIF_ID,
+                          et, sun_pos_central);
+
+    double occulting2sat[3], occulting2sun[3], sat2sun[3];
+    for (int i = 0; i < 3; i++) {
+        occulting2sat[i] = y[i]              - occ_pos_central[i];
+        occulting2sun[i] = sun_pos_central[i] - occ_pos_central[i];
+        sat2sun[i]       = sun_pos_central[i] - y[i];
+    }
+    return spody_get_sateclipsestatus(occulting2sat, occulting2sun, sat2sun,
+                                      SUN_RADIUS, ev->radius_km);
+}
+
 int spody_event_check(SpodyEvent *ev,
                       const ForceModelContext *ctx,
                       double t, const double *y)
@@ -73,6 +125,15 @@ int spody_event_check(SpodyEvent *ev,
             ev->distance_at_trigger = sqrt(d2);
             return 1;
         }
+        case SPODY_EVENT_KIND_ECLIPSE: {
+            /* ECLIPSE is recurring -- correctly detecting transitions
+             * requires sign tracking across two accepted steps, which
+             * the refined path implements. The coarse path cannot
+             * disambiguate "in shadow now" from "just entered shadow",
+             * so it does not fire. Use spody_event_check_refined with
+             * a SPODY_INTEG_RK45 integrator instead. */
+            break;
+        }
         default:
             break;   /* unknown kind: never fires */
     }
@@ -83,17 +144,19 @@ int spody_event_check(SpodyEvent *ev,
  * Refined check: dense output + Brent root finding
  * ============================================================ */
 
-/* Closure passed to the Brent solver: evaluate the predicate
- * (distance - radius) at a given theta in [0, 1]. */
+/* Closure passed to the Brent solver. Generic over event kinds: each
+ * kind plugs in its own residual function (impact_residual,
+ * eclipse_residual, ...) that reads ev/ctx/integ through the closure
+ * and writes the dense-evaluated state into y_buf as scratch. */
 typedef struct {
     SpodyEvent              *ev;
     const ForceModelContext *ctx;
     const IntegratorAllData *integ;
     double y_buf[6];   /* scratch for dense_eval (caller's frame is 6-dim) */
-} ImpactClosure;
+} EventClosure;
 
 static double impact_residual(double theta, void *args) {
-    ImpactClosure *c = (ImpactClosure*)args;
+    EventClosure *c = (EventClosure*)args;
     /* state at theta on the just-completed step */
     spody_dense_eval(c->integ, theta, c->y_buf);
 
@@ -103,6 +166,14 @@ static double impact_residual(double theta, void *args) {
     /* distance to the body at that state */
     double d2 = impact_distance2(c->ev, c->ctx, t_theta, c->y_buf);
     return sqrt(d2) - c->ev->radius_km;
+}
+
+static double eclipse_residual(double theta, void *args) {
+    EventClosure *c = (EventClosure*)args;
+    spody_dense_eval(c->integ, theta, c->y_buf);
+    double t_theta = c->integ->t_old + theta * c->integ->h_old;
+    double frac    = eclipse_fraction(c->ev, c->ctx, t_theta, c->y_buf);
+    return frac - c->ev->threshold_fraction;
 }
 
 int spody_event_check_refined(SpodyEvent *ev,
@@ -138,7 +209,7 @@ int spody_event_check_refined(SpodyEvent *ev,
 
             /* Bracket Brent on theta in [0, 1] using the closure that
              * evaluates Hermite + impact_distance2 at each probe. */
-            ImpactClosure cl;
+            EventClosure cl;
             cl.ev    = ev;
             cl.ctx   = ctx;
             cl.integ = integ;
@@ -169,6 +240,50 @@ int spody_event_check_refined(SpodyEvent *ev,
             ev->t_trigger = t_trigger;
             for (int i = 0; i < 6; i++) ev->y_trigger[i] = cl.y_buf[i];
             ev->distance_at_trigger = sqrt(d2_trig);
+            return 1;
+        }
+        case SPODY_EVENT_KIND_ECLIPSE: {
+            /* ECLIPSE is recurring: NO latch on ev->triggered. Every
+             * threshold crossing fires a fresh trigger; the caller is
+             * expected to consume the output fields (via emit_event)
+             * before the next call overwrites them. */
+
+            /* signed predicate at the two ends of the just-completed step */
+            double f_end   = eclipse_fraction(ev, ctx, integ->t, integ->y)
+                             - ev->threshold_fraction;
+            double f_start = ev->prev_valid ? ev->prev_distance_signed
+                : (eclipse_fraction(ev, ctx, integ->t_old, integ->y_old)
+                   - ev->threshold_fraction);
+            ev->prev_distance_signed = f_end;
+            ev->prev_valid = 1;
+
+            /* No sign change -> no threshold crossing in [t_old, t]. */
+            if ((f_start > 0.0) == (f_end > 0.0)) break;
+
+            EventClosure cl;
+            cl.ev    = ev;
+            cl.ctx   = ctx;
+            cl.integ = integ;
+
+            double theta_root = 0.0;
+            int rc = spody_solver_brent(eclipse_residual, &cl,
+                                        /*x_lo=*/0.0, /*x_hi=*/1.0,
+                                        /*f_lo=*/f_start, /*f_hi=*/f_end,
+                                        /*use_provided=*/1,
+                                        /*tol=*/1e-12, /*max_iter=*/60,
+                                        &theta_root);
+            if (rc != SPODY_SOLVER_OK) {
+                theta_root = 1.0;
+            }
+
+            spody_dense_eval(integ, theta_root, cl.y_buf);
+            double t_trigger = integ->t_old + theta_root * integ->h_old;
+            double frac_trig = eclipse_fraction(ev, ctx, t_trigger, cl.y_buf);
+
+            ev->triggered = 1;
+            ev->t_trigger = t_trigger;
+            for (int i = 0; i < 6; i++) ev->y_trigger[i] = cl.y_buf[i];
+            ev->distance_at_trigger = frac_trig;   /* semantic reuse: fraction in [0,1] */
             return 1;
         }
         default:

@@ -49,10 +49,11 @@ extern "C" {
  * ============================================================ */
 
 /* Kinds of supported events. The enum is open: adding new kinds (e.g.
- * altitude, eclipse entry/exit, apsis passage) is non-breaking. */
+ * altitude, apsis passage) is non-breaking. */
 typedef enum {
-    SPODY_EVENT_KIND_IMPACT = 0       /* |r_sat - r_body| < radius_km */
-    /* future: SPODY_EVENT_KIND_ALT_BELOW, _APSIS, _ECLIPSE_ENTRY, ... */
+    SPODY_EVENT_KIND_IMPACT  = 0,    /* one-shot: |r_sat - r_body| < radius_km   */
+    SPODY_EVENT_KIND_ECLIPSE = 1     /* recurring: eclipse fraction crosses threshold */
+    /* future: SPODY_EVENT_KIND_ALT_BELOW, _APSIS, ... */
 } spody_event_kind;
 
 /* What the runtime should do when an event triggers. */
@@ -64,42 +65,79 @@ typedef enum {
 
 /* Generic event descriptor.
  *
- * IMPACT semantics:
- *   The check is geometric: at each step, compute the satellite-to-body
- *   distance and compare with `radius_km`. The body is identified by
- *   `naif_id`. If `naif_id == ctx->naif_central` the satellite position
- *   y[0..2] is already in the central frame; otherwise the body
- *   position is queried from the ephemeris in the central frame and
- *   subtracted from y[0..2]. Trigger condition:
+ * Field meanings depend on `kind` -- the same slots are reused across
+ * predicates to keep the struct small and cheap to copy.
+ *
+ * IMPACT (one-shot):
+ *   The check is geometric: compute the satellite-to-body distance and
+ *   compare with `radius_km`. The body is identified by `naif_id`. If
+ *   `naif_id == ctx->naif_central` the satellite position y[0..2] is
+ *   already in the central frame; otherwise the body position is
+ *   queried from the ephemeris in the central frame and subtracted
+ *   from y[0..2]. Trigger condition:
  *
  *      |r_sat - r_body| < radius_km
  *
- *   At trigger the runtime fills the bookkeeping fields below.
+ *   At trigger the runtime writes |r_sat - r_body| into
+ *   distance_at_trigger.
+ *
+ * ECLIPSE (recurring):
+ *   `naif_id` is the occulting body, `radius_km` its physical radius
+ *   (both must be set by the caller); `threshold_fraction` is the
+ *   eclipse-fraction level whose crossing fires the event:
+ *     1.0 -> any loss of sunlight (penumbra entry)
+ *     0.5 -> middle of penumbra (default in spody CLI)
+ *     0.0 -> full umbra entry
+ *   The fraction is computed by spody_get_sateclipsestatus (Montenbruck
+ *   & Gill); the Sun position is always queried from the ephemeris.
+ *   At trigger the runtime writes the fraction at trigger into
+ *   distance_at_trigger (semantic slot reuse).
+ *
+ *   ECLIPSE is recurring: every threshold crossing (entry AND exit)
+ *   fires a fresh trigger. The caller distinguishes the direction by
+ *   the value of prev_distance_signed at the previous fire, or by
+ *   post-processing the events log.
  */
 typedef struct {
     /* ---- caller-set ---- */
     spody_event_kind   kind;
     spody_event_action action;
-    int    naif_id;                 /* IMPACT: body to check against */
-    double radius_km;               /* IMPACT: trigger threshold     */
+    int    naif_id;                 /* IMPACT: body to check against
+                                       ECLIPSE: occulting body         */
+    double radius_km;               /* IMPACT: trigger threshold
+                                       ECLIPSE: occulter physical radius */
+    double threshold_fraction;      /* ECLIPSE: fraction threshold in [0, 1] */
 
     /* ---- runtime-set (output) ---- */
-    int    triggered;               /* 1 if the predicate has fired              */
-    double t_trigger;               /* sim time of the trigger (seconds from t=0) */
-    double y_trigger[6];            /* state at trigger: r(3), v(3)              */
-    double distance_at_trigger;     /* IMPACT: |r_sat - r_body| at trigger        */
+    int    triggered;               /* 1 if the predicate has ever fired        */
+    double t_trigger;               /* sim time of the (last) trigger           */
+    double y_trigger[6];            /* state at the (last) trigger              */
+    double distance_at_trigger;     /* IMPACT: |r_sat - r_body| at trigger
+                                       ECLIPSE: eclipse fraction at trigger      */
 
     /* ---- runtime-set (internal book-keeping for sign tracking) ----
-     * Distance value at the previous step. Used to detect a sign change
-     * of (distance - radius) between two accepted steps; root-finding is
-     * launched only when the predicate flips. Sentinel value -1.0 means
-     * "no previous value yet" (first call). */
-    double prev_distance_signed;    /* (|r_sat - r_body| - radius) at last step  */
+     * Predicate scalar at the previous step. Used to detect a sign
+     * change of the predicate between two accepted steps; the refined
+     * root-finding is launched only when it flips. */
+    double prev_distance_signed;    /* IMPACT: (|r_sat - r_body| - radius)
+                                       ECLIPSE: (eclipse_fraction - threshold)   */
     int    prev_valid;              /* 0 = first call, 1 = prev_distance valid   */
 } SpodyEvent;
 
 /* Convenience constructor for an impact event. */
 SpodyEvent spody_event_impact(int naif_id, double radius_km, spody_event_action action);
+
+/* Convenience constructor for an eclipse event.
+ *
+ *   occulter_naif_id    : NAIF id of the occulting body
+ *   occulter_radius_km  : its physical radius
+ *   threshold_fraction  : eclipse-fraction level whose crossing fires
+ *                         the event (see ECLIPSE section above)
+ *   action              : typically SPODY_EVENT_ACTION_LOG since
+ *                         eclipse events are usually informational
+ */
+SpodyEvent spody_event_eclipse(int occulter_naif_id, double occulter_radius_km,
+                               double threshold_fraction, spody_event_action action);
 
 /* Evaluate the event predicate on the given state.
  *
