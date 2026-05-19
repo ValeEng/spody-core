@@ -48,6 +48,9 @@ option(SPODY_ENABLE_OMP_SIMD
 option(SPODY_VEC_REPORT
     "Emit auto-vectorization diagnostic (MSVC: /Qvec-report:2, GCC/Clang: -fopt-info-vec[-missed])" OFF)
 
+option(SPODY_BUILD_TVB
+    "Build the local-only tests / validations / benchmarks under tvb/" OFF)
+
 # -----------------------------------------------------------------------------
 # C standard
 # -----------------------------------------------------------------------------
@@ -272,6 +275,25 @@ install(DIRECTORY include/ DESTINATION include
 # Generated header (configure-time) is installed alongside the others.
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/generated/spody_version.h"
     DESTINATION include)
+
+# -----------------------------------------------------------------------------
+# Tests / validations / benchmarks (developer workflow, local-only)
+# -----------------------------------------------------------------------------
+# tvb/ is gitignored: it is a developer sandbox, not part of the public
+# repo. The sub-cmake under tvb/ has no project() of its own -- it is
+# written to be add_subdirectory()-ed by this root file. Off by default
+# so a plain `cmake ..` produces only the library. The spody application
+# parent forces this OFF before consuming spody-core, so it never fires
+# from the app build.
+if(SPODY_BUILD_TVB)
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tvb/CMakeLists.txt")
+        add_subdirectory(tvb)
+    else()
+        message(STATUS
+            "SPODY_BUILD_TVB requested but tvb/ is not present in this checkout "
+            "(it is gitignored); skipping.")
+    endif()
+endif()
 
 # -----------------------------------------------------------------------------
 # Configuration summary

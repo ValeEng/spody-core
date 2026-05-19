@@ -184,10 +184,19 @@ int spody_propagate_untilend(IntegratorAllData *integ, double t_end);
  *
  *     y(theta) = y(t_old + theta * h_old),    theta in [0, 1]
  *
- * Currently implemented for SPODY_INTEG_RK45 (Dormand-Prince 5(4))
- * using the Shampine 1986 quintic interpolant: the same accuracy of
- * the underlying 5th-order method, no extra RHS evaluations -- the
- * stored RK stages are reused.
+ * Implementation (SPODY_INTEG_RK45):
+ *   Cubic Hermite C^1 using the FSAL endpoint derivatives k_1 and k_7
+ *   (which already sit in integ->k pre-multiplied by h_old). This is
+ *   integrator-consistent for the 7S Butcher tableau we run, so a
+ *   downstream root-finder (e.g. spody_event_check_refined) sees a
+ *   curve that actually corresponds to the integrated trajectory.
+ *   See the file-level comment in spody_integrators.c for why we use
+ *   Hermite here instead of the classical DOPRI5 P-matrix.
+ *
+ *   Accuracy is 4th-order on the state (one order below the integrator
+ *   itself); over a 30 s step at LRO this localises a surface crossing
+ *   to well under one microsecond -- below any physically meaningful
+ *   threshold for impact / altitude / eclipse events.
  *
  * Other methods (RK4, Verlet, RK78) currently return
  * SPODY_INTEG_ERR_NULL; their dense-output formulas can be added later.

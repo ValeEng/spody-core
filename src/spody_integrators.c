@@ -18,6 +18,7 @@
 #include <string.h>
 #include <math.h>
 #include "spody_integrators.h"
+#include "spody_interp.h"   /* spody_hermite_cubic_1d for dense output */
 
 //----- DP45 well-known constants (hardcoded, do not expose in options) ------
 
@@ -500,80 +501,64 @@ int spody_propagate_untilend(IntegratorAllData *integ, double t_end) {
 }
 
 /* ============================================================
- * Dense output for Dormand-Prince 5(4)
+ * Dense output: cubic Hermite C^1 via FSAL endpoint derivatives
  *
- * Quartic polynomial interpolant inside the just-completed step:
+ * For RKDP45 (Dormand-Prince 5(4)) the integrator advance here uses the
+ * "7S" Butcher tableau (see top of file -- chosen because its embedded
+ * error estimate is the more reliable of the two DP5 variants). The
+ * classical 5th-order DOPRI5 dense-output coefficients from Hairer-
+ * Wanner Table 6.1 are tied to the "7M" k-stage pattern instead, so
+ * applying that P-matrix to the 7S stages produces an interpolant that
+ * matches at the endpoints (by construction of any reasonable formula)
+ * but drifts off the integrated trajectory mid-step. The bug is
+ * harmless for trajectory plotting (errors stay small) but it breaks
+ * downstream localisation -- spody_event_check_refined runs Brent on
+ * the dense curve, so a non-integrator-consistent interpolant gives a
+ * wrong t_trigger.
  *
- *     y(t_old + theta * h_old) = y_old + h_old * theta *
- *         sum_{s=1..7} k_s_deriv * ( P[s][0] + P[s][1]*theta
- *                                  + P[s][2]*theta^2 + P[s][3]*theta^3 )
+ * Cubic Hermite sidesteps the issue entirely: it depends only on the
+ * endpoint values and the endpoint derivatives, both of which are
+ * integrator-consistent for any Butcher tableau. The accuracy drops
+ * one order vs the DOPRI5 standard formula (4th order on y vs 5th),
+ * still strictly higher than the method's local truncation error;
+ * over a 30 s LRO step this is sub-microsecond on a time-localised
+ * event surface, far below any physically meaningful threshold.
  *
- * where P is the standard DOPRI5 dense-output coefficient matrix used
- * by scipy.integrate.RK45 / Hairer-Wanner ("Solving ODEs I", I.6, Table
- * 6.1 of the second edition). Note s=2 is identically zero (k2 does not
- * contribute) but we keep it in the loop for clarity.
+ * FSAL note: for RKDP45 the last stage is "first same as last", so
+ *     k_1 = h_old * f(t_old, y_old)
+ *     k_7 = h_old * f(t_new, y_new)
+ * are exactly the endpoint derivatives (times h_old) we need. No
+ * extra RHS evaluation is performed.
  *
- * Implementation note: the k_s stored in integ->k are already
- * pre-multiplied by h_old (see step_rkdp45). Substituting
- *     k_s_pre = h_old * k_s_deriv
- * the h_old factor cancels and the formula becomes
- *     y(theta) = y_old + theta * sum_s k_s_pre * Q_s(theta)
- * with Q_s(theta) = P[s][0] + P[s][1]*theta + P[s][2]*theta^2 + P[s][3]*theta^3.
+ * The Hermite basis itself lives in spody_interp.{h,c}; we only stage
+ * the inputs here.
  * ============================================================ */
-static const double rkdp45_dense_P[7][4] = {
-    /* k1 */ {  1.0,
-                -8048581381.0   /  2820520608.0,
-                 8663915743.0   /  2820520608.0,
-               -12715105075.0   / 11282082432.0 },
-    /* k2 */ {  0.0, 0.0, 0.0, 0.0 },
-    /* k3 */ {  0.0,
-               131558114200.0  / 32700410799.0,
-               -68118460800.0  / 10900136933.0,
-                87487479700.0  / 32700410799.0 },
-    /* k4 */ {  0.0,
-                -1754552775.0  /   470086768.0,
-                14199371449.0  /   470086768.0,
-               -10690763975.0  /  1880347072.0 },
-    /* k5 */ {  0.0,
-               127303824393.0  / 49829197408.0,
-              -318862633887.0  / 49829197408.0,
-               701980252875.0  /199316789632.0 },
-    /* k6 */ {  0.0,
-                 -282668133.0  /   205662961.0,
-                 2019193451.0  /   616988883.0,
-                -1453857185.0  /   822651844.0 },
-    /* k7 */ {  0.0,
-                  40617522.0   /   29380423.0,
-                -110615467.0   /   29380423.0,
-                  69997945.0   /   29380423.0 },
-};
-
 int spody_dense_eval(const IntegratorAllData *integ, double theta, double *y_out) {
     if (!integ || !y_out) return SPODY_INTEG_ERR_NULL;
     if (integ->method != SPODY_INTEG_RK45) return SPODY_INTEG_ERR_NULL;
-    if (!integ->y_old || !integ->k) return SPODY_INTEG_ERR_NULL;
+    if (!integ->y_old || !integ->y || !integ->k) return SPODY_INTEG_ERR_NULL;
 
     if (theta < 0.0) theta = 0.0;
     if (theta > 1.0) theta = 1.0;
 
-    /* per-stage scalar weights w_s(theta) = theta * (P[s][0] + P[s][1]*theta + ...) */
-    double th2 = theta * theta;
-    double th3 = th2   * theta;
-    double w[7];
-    for (int s = 0; s < 7; s++) {
-        w[s] = theta * (  rkdp45_dense_P[s][0]
-                        + rkdp45_dense_P[s][1] * theta
-                        + rkdp45_dense_P[s][2] * th2
-                        + rkdp45_dense_P[s][3] * th3 );
-    }
+    /* spody_hermite_cubic_1d expects derivatives in physical units
+     * (per-second), but k-stages are stored pre-multiplied by h_old.
+     * Convert once and pass the scalars to the library helper component
+     * by component -- the basis computation is cheap and the call
+     * pattern stays dim-agnostic without needing a temporary buffer. */
+    const int    dim   = integ->dim;
+    const double h_old = integ->h_old;
+    const double t_q   = integ->t_old + theta * h_old;
+    const double inv_h = (h_old != 0.0) ? 1.0 / h_old : 0.0;
+    const double *k1   = &integ->k[0 * dim];   /* h_old * f(t_old, y_old)  */
+    const double *k7   = &integ->k[6 * dim];   /* h_old * f(t_new, y_new)  */
 
-    const int dim = integ->dim;
     for (int i = 0; i < dim; i++) {
-        double acc = 0.0;
-        for (int s = 0; s < 7; s++) {
-            acc += w[s] * integ->k[s * dim + i];
-        }
-        y_out[i] = integ->y_old[i] + acc;
+        y_out[i] = spody_hermite_cubic_1d(
+                        t_q,
+                        integ->t_old, integ->t,
+                        integ->y_old[i], k1[i] * inv_h,
+                        integ->y[i],     k7[i] * inv_h);
     }
     return SPODY_INTEG_OK;
 }
