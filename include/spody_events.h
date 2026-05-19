@@ -103,26 +103,35 @@ SpodyEvent spody_event_impact(int naif_id, double radius_km, spody_event_action 
 
 /* Evaluate the event predicate on the given state.
  *
+ * Return value:
+ *   1 -> NEW fire in this call. The trigger output fields
+ *        (t_trigger, y_trigger, distance_at_trigger) have just been
+ *        written; ev->triggered is now 1. The caller should react
+ *        (log to file, request stop, etc.).
+ *   0 -> no new fire. Either the predicate did not hold, or the event
+ *        is a one-shot kind that already latched on a previous call
+ *        (per-kind decision inside the dispatch -- IMPACT is one-shot,
+ *        future recurring kinds like altitude / apsis / eclipse won't
+ *        latch). The output fields are NOT updated in this case; if
+ *        you need "has this event ever fired?", read ev->triggered.
+ *
  * "Coarse" version: fires as soon as the predicate is true at the
- * accepted step (precision = step size). Idempotent: if ev->triggered
- * is already 1, returns 1 without re-checking. */
+ * accepted step (precision = step size). */
 int spody_event_check(SpodyEvent *ev,
                       const ForceModelContext *ctx,
                       double t, const double *y);
 
 /* "Refined" version: detects a sign change of the predicate between two
  * accepted steps and uses dense output + Brent root-finding to localise
- * the trigger inside the last step. Precision is therefore at the level
- * of the dense interpolant (5th order for DOPRI5: typically much better
- * than 1 ms over a ~30 s step on a smooth trajectory).
+ * the trigger inside the last step. Precision is at the level of the
+ * dense interpolant (cubic Hermite C^1; sub-microsecond on a 30 s LRO
+ * step). Same return semantics as the coarse version above.
  *
  * The integrator must be SPODY_INTEG_RK45 (other methods don't yet
- * provide dense_eval and would silently fall back to the coarse path).
+ * provide dense_eval and silently fall back to the coarse path).
  * Pass `integ` as the integrator that just produced (t, y) via
  * spody_propagate_onestep -- the function reads integ->t_old, integ->y_old
- * and the stored RK stages to evaluate the interpolant.
- *
- * Returns 1 on trigger, 0 otherwise. */
+ * and the stored RK stages to evaluate the interpolant. */
 int spody_event_check_refined(SpodyEvent *ev,
                               const ForceModelContext *ctx,
                               const IntegratorAllData *integ);
