@@ -28,28 +28,40 @@ static int read_ephemeris_file_header(FILE *file, EphemerisFile_Header *ep ) {
         if (!found_group) {
             if (strstr(line, "GROUP") || strstr(line, "KSIZE")){
                 if(strstr(line, "KSIZE")) {
-                    printf("RECORD SIZE found (normally the first row)\n");  
+                    #if DEBUG_EPHEMERIS == 1
+                    printf("RECORD SIZE found (normally the first row)\n");
+                    #endif
                     char *token = strtok(line, " \t\r\n");
                     while (token) {
                         if (strstr(token, "KSIZE")) {
                             token = strtok(NULL, " \t\r\n");
-                            ep->bytes_per_record = strtod(token, NULL); 
+                            ep->bytes_per_record = strtod(token, NULL);
+                            #if DEBUG_EPHEMERIS == 1
                             printf("load KSIZE : %d\n",ep->bytes_per_record);
+                            #endif
                         } else if (strstr(token, "NCOEFF")) {
                             token = strtok(NULL, " \t\r\n");
-                            ep->number_coefficients_per_record = strtod(token, NULL); ; 
+                            ep->number_coefficients_per_record = strtod(token, NULL); ;
+                            #if DEBUG_EPHEMERIS == 1
                             printf("load NCOEFF : %d\n",ep->number_coefficients_per_record);
+                            #endif
                         }
                         token = strtok(NULL, " \t\r\n");
                     }
+                    #if DEBUG_EPHEMERIS == 1
                     printf("RECORD SIZE %d | N COEFF %d\n", ep->bytes_per_record, ep->number_coefficients_per_record);
-                    continue;              
+                    #endif
+                    continue;
                 }else if (strstr(line, "1030")) {
                     found_group = 1030;
-                    printf("GROUP 1030 found\n"); 
+                    #if DEBUG_EPHEMERIS == 1
+                    printf("GROUP 1030 found\n");
+                    #endif
                 }else if (strstr(line, "1050")) {
                     found_group = 1050;
-                    printf("GROUP 1050 found\n"); 
+                    #if DEBUG_EPHEMERIS == 1
+                    printf("GROUP 1050 found\n");
+                    #endif
                 }
             }
             continue; //next line 
@@ -66,36 +78,40 @@ static int read_ephemeris_file_header(FILE *file, EphemerisFile_Header *ep ) {
                 double val = strtod(token, NULL);
 
                 if (ele == 0) {
-                    ep->start_epoch = val; 
+                    ep->start_epoch = val;
                 } else if (ele == 1) {
-                    ep->end_epoch = val; 
+                    ep->end_epoch = val;
                 } else if (ele == 2) {
                     /* ASCII gives days; we keep the value here temporarily
                      * and convert to seconds (and ET for start/end) just
                      * before writing the binary header. */
                     ep->seconds_per_record = (int)val;
                 }
-                
+
+                #if DEBUG_EPHEMERIS == 1
                 printf("Ele %d: %f\n", ele, val);
+                #endif
                 ele++;
                 token = strtok(NULL, " \t\r\n");
             }
             found_group = 0;
-            
+
         }else if (found_group == 1050){
             int ele = 0;
             while (token) {
                 double val = strtod(token, NULL);
 
                 if (data_row == 0) {
-                    ep->location[ele] = val; 
+                    ep->location[ele] = val;
                 } else if (data_row == 1) {
-                    ep->number_coefficients_per_component[ele] = val; 
+                    ep->number_coefficients_per_component[ele] = val;
                 } else if (data_row == 2) {
-                    ep->number_complete_sets_coefficients_per_record[ele] = val; 
+                    ep->number_complete_sets_coefficients_per_record[ele] = val;
                 }
-                
+
+                #if DEBUG_EPHEMERIS == 1
                 printf("row %d, Ele %d: %f\n", data_row, ele, val);
+                #endif
 
                 ele++;
                 token = strtok(NULL, " \t\r\n");
@@ -132,29 +148,39 @@ static int read_record_block(FILE *fp, EphemerisFile_Header *ep, EphemerisFile_R
    
     char line[BUFFER_SIZE_EPH];
     int n_coeff_expected = 0;
+    #if DEBUG_EPHEMERIS == 1
     printf("in read record\n");
+    #endif
 
-    if (!fgets(line, sizeof(line), fp)) return 0; // it's end of file 
+    if (!fgets(line, sizeof(line), fp)) return 0; // it's end of file
     //printf("Reading line: %s\n", line);
     if (sscanf(line, "%d %d", &eprec->record_number, &eprec->number_coefficients_per_record) != 2) return 0; // Parsing of number of coefficients
     //printf("Reading record %d with %d coefficients\n", eprec->record_number, eprec->number_coefficients_per_record);
     if (eprec->number_coefficients_per_record != ep->number_coefficients_per_record) {
+        /* Real parser error -- left unconditional so the user is told
+         * the on-disk ASCII is inconsistent with its own header. */
         printf("Warning: Expected %d coefficients, but found %d in block %d\n", n_coeff_expected, eprec->number_coefficients_per_record, eprec->record_number);
         printf("HEADER info diverge from data blocks read.\n");
         printf("Check the ephemeris file integrity.\n");
         return 0;
     }else{
         n_coeff_expected = eprec->number_coefficients_per_record;
+        #if DEBUG_EPHEMERIS == 1
         printf("n_coeff_expected : %d\n",n_coeff_expected);
+        #endif
     }
 
+    #if DEBUG_EPHEMERIS == 1
     printf("cleaning ok\n");
+    #endif
 
     int coeff_idx = 0;
     char *token;
-    while (coeff_idx < n_coeff_expected) { 
+    while (coeff_idx < n_coeff_expected) {
         if (fgets(line, sizeof(line), fp)){
+            #if DEBUG_EPHEMERIS == 1
             printf("Reading coefficients line: %s\n", line);
+            #endif
             token = strtok(line, " \t\r\n");
             while (token != NULL && coeff_idx < n_coeff_expected) {
                 //printf("Token: %s\n", token);
@@ -163,10 +189,12 @@ static int read_record_block(FILE *fp, EphemerisFile_Header *ep, EphemerisFile_R
                 token = strtok(NULL, " \t\r\n");
             }
         }else{
-            return -100; //end file 
+            return -100; //end file
         }
     }
+    #if DEBUG_EPHEMERIS == 1
     printf("token loaded : %d\n",coeff_idx);
+    #endif
     /* Convert the JD time bracket from the ASCII source to ET (seconds past
      * J2000 TDB). The on-disk binary format (SPDEET) keeps record epochs in
      * ET so the runtime never has to convert back. */
@@ -177,19 +205,25 @@ static int read_record_block(FILE *fp, EphemerisFile_Header *ep, EphemerisFile_R
 }
 
 static int create_binary_ephemeris_file(EphemerisFile_Header *ep, int64_t *old_epoch, const char *ascp_filename, const char *bin_filename) {
+    #if DEBUG_EPHEMERIS == 1
     printf("in create binary\n");
+    #endif
     FILE *fp_ascp = fopen(ascp_filename, "r");
     if (!fp_ascp) { perror("Errore file ascp"); return -1; }
 
     FILE *fp_bin = fopen(bin_filename, "ab");  // "ab" for append mode
     if (!fp_bin) { perror("Errore file bin"); fclose(fp_ascp); return -1; }
+    #if DEBUG_EPHEMERIS == 1
     printf("file loaded\n");
+    #endif
 
     double t_start, t_end;
     size_t record_size = ep->bytes_per_record;
+    #if DEBUG_EPHEMERIS == 1
     printf("sizeof(EphemerisFile_Record) : %zu\n", sizeof(EphemerisFile_Record));
     printf("ep->number_coefficients_per_record * sizeof(double) : %zu\n",ep->number_coefficients_per_record * sizeof(double));
     printf("read -> bytes_per_record : %zu\n",record_size);
+    #endif
 
     EphemerisFile_Record *eprec = malloc(record_size);
     if (!eprec) {
@@ -198,32 +232,38 @@ static int create_binary_ephemeris_file(EphemerisFile_Header *ep, int64_t *old_e
         fclose(fp_bin);
         return -1;
     }
+    #if DEBUG_EPHEMERIS == 1
     printf("malloc ok\n");
-    
+    #endif
+
     int block_count = 0;
     // Read each record block and write to binary file
     while (read_record_block(fp_ascp, ep, eprec)) {
         block_count++;
+        #if DEBUG_EPHEMERIS == 1
         printf("block %d readed\n",block_count);
         printf("old epoch : %d\n",*old_epoch);
-
-
+        #endif
 
         /* Detect duplicate records across consecutive ASCII chunks. ET values
          * for adjacent records differ by at least seconds_per_record (~32 days
          * = 2.7e6 s), so an int64 truncation is more than safe to compare. */
         if (*old_epoch == (int64_t)eprec->start_epoch) {
+            /* Real diagnostic about overlapping chunks -- left unconditional
+             * so the user knows we silently dropped a record. */
             printf("\n\n! a clone record foud ! record %d start date %.2f \n\n",eprec->record_number, eprec->start_epoch);
             continue;
         }
         *old_epoch = (int64_t)eprec->start_epoch;
+        #if DEBUG_EPHEMERIS == 1
         printf("new old epoch : %lld\n", (long long)*old_epoch);
-
-
         printf("Writing record %d to binary file\n", eprec->record_number);
         printf("size of : %zu\n",record_size);
+        #endif
         fwrite(eprec, record_size, 1, fp_bin);
+        #if DEBUG_EPHEMERIS == 1
         printf("Written record %04d with %04d coefficients from %.6f to %.6f\n", eprec->record_number, eprec->number_coefficients_per_record, eprec->start_epoch, eprec->end_epoch);
+        #endif
 
     }
     free(eprec);
@@ -452,7 +492,9 @@ int spody_createfile_MappedEphemerisData(const char *path, const char **file_nam
     size_t n = ep.number_coefficients_per_record;
     size_t record_size = sizeof(EphemerisFile_Record) + n * sizeof(double);
     ep.bytes_per_record = (int)record_size;
+    #if DEBUG_EPHEMERIS == 1
     printf("ep.bytes_per_record : %d\n",ep.bytes_per_record);
+    #endif
 
     /* Convert the header epochs from the ASCII (JD, days) source to the
      * SPDEET on-disk format (ET, seconds). */
@@ -467,8 +509,10 @@ int spody_createfile_MappedEphemerisData(const char *path, const char **file_nam
     fwrite(&ep, sizeof(EphemerisFile_Header), 1, fp_bin);
     fclose(fp_bin);
 
+    #if DEBUG_EPHEMERIS == 1
     printf("header writed, size : %zu (magic=%.8s, version=%u)\n",
            sizeof(EphemerisFile_Header), ep.magic, (unsigned)ep.format_version);
+    #endif
 
     int64_t old_epoch = 1; /* necessary to avoid duplicate; ET values fit easily in int64 */
 
@@ -477,9 +521,13 @@ int spody_createfile_MappedEphemerisData(const char *path, const char **file_nam
         sprintf(ascp_filename, "./%s/ascp%s.%s",path,file_names[i],de);
 
         returnNumber = create_binary_ephemeris_file(&ep,&old_epoch,ascp_filename,bin_filename);
+        #if DEBUG_EPHEMERIS == 1
         printf("old epoch : %lld\n",(long long)old_epoch);
+        #endif
 
-        printf("\n\nfile %d writed\n",i);
+        /* One-line progress per file -- kept unconditional so the user
+         * (and the GUI's wizard convert window) sees the loop tick. */
+        printf("file %d writed\n",i);
 
     }
 
