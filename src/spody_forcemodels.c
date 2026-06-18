@@ -47,8 +47,14 @@ void spody_force_twobody(double mu, const double r[3], double acc[3]) {
 /* ============================================================
  * Atomic force: spherical harmonics (disturbing part)
  *
- * Wraps the rotation pipeline ICRF -> Moon PA -> body-fixed harm -> ICRF.
- * Uses the lunar libration angles from the ephemeris at et.
+ * Wraps the rotation pipeline ICRF -> body-fixed -> harm eval ->
+ * ICRF. The central-body orientation provider (`get_R`) is passed
+ * in by the caller so this kernel stays body-agnostic: any central
+ * body whose orientation can be expressed as ICRF<->body-fixed
+ * rotation matrices is supported. The application registers the
+ * right provider for the configured central body
+ * (e.g. spody_bf_rotation_moon) when it builds the
+ * ForceModelContext.
  *
  * Selector for the body-fixed kernel: defaults to the HPC variant. Set the
  * env var SPODY_HG_NONHPC=1 (any non-zero int) to switch the whole process
@@ -69,31 +75,37 @@ static spody_hg_kernel_fn spody_select_hg_kernel(void) {
     return cached;
 }
 
+void spody_bf_rotation_moon(MappedEphemeris *eph, double et,
+                             double R_icrf_to_bf[3][3],
+                             double R_bf_to_icrf[3][3]) {
+    double angles[3];
+    spody_get_lunarlibrationangles(eph, et, angles);
+    spody_getrotmatrix_icrf2moonpa(angles[0], angles[1], angles[2], R_icrf_to_bf);
+    spody_getrotmatrix_moonpa2icrf(angles[0], angles[1], angles[2], R_bf_to_icrf);
+}
+
 void spody_force_sphericalharmonics(HarmonicGravity *hg, MappedEphemeris *eph,
                                     double et, const double r[3],
+                                    spody_bf_rotation_fn get_R,
                                     double acc[3]) {
-    double angles[3];
-    double R_i2pa[3][3];
-    double R_pa2i[3][3];
+    double R_i2bf[3][3];
+    double R_bf2i[3][3];
+    get_R(eph, et, R_i2bf, R_bf2i);
 
-    spody_get_lunarlibrationangles(eph, et, angles);
-    spody_getrotmatrix_icrf2moonpa(angles[0], angles[1], angles[2], R_i2pa);
-    spody_getrotmatrix_moonpa2icrf(angles[0], angles[1], angles[2], R_pa2i);
+    /* r in body-fixed frame */
+    double r_bf[3];
+    r_bf[0] = R_i2bf[0][0]*r[0] + R_i2bf[0][1]*r[1] + R_i2bf[0][2]*r[2];
+    r_bf[1] = R_i2bf[1][0]*r[0] + R_i2bf[1][1]*r[1] + R_i2bf[1][2]*r[2];
+    r_bf[2] = R_i2bf[2][0]*r[0] + R_i2bf[2][1]*r[1] + R_i2bf[2][2]*r[2];
 
-    /* r in PA frame */
-    double r_pa[3];
-    r_pa[0] = R_i2pa[0][0]*r[0] + R_i2pa[0][1]*r[1] + R_i2pa[0][2]*r[2];
-    r_pa[1] = R_i2pa[1][0]*r[0] + R_i2pa[1][1]*r[1] + R_i2pa[1][2]*r[2];
-    r_pa[2] = R_i2pa[2][0]*r[0] + R_i2pa[2][1]*r[1] + R_i2pa[2][2]*r[2];
-
-    /* harmonic disturbing acc in PA frame */
-    double acc_pa[3];
-    spody_select_hg_kernel()(hg, r_pa, acc_pa);
+    /* harmonic disturbing acc in body-fixed frame */
+    double acc_bf[3];
+    spody_select_hg_kernel()(hg, r_bf, acc_bf);
 
     /* back to ICRF */
-    acc[0] = R_pa2i[0][0]*acc_pa[0] + R_pa2i[0][1]*acc_pa[1] + R_pa2i[0][2]*acc_pa[2];
-    acc[1] = R_pa2i[1][0]*acc_pa[0] + R_pa2i[1][1]*acc_pa[1] + R_pa2i[1][2]*acc_pa[2];
-    acc[2] = R_pa2i[2][0]*acc_pa[0] + R_pa2i[2][1]*acc_pa[1] + R_pa2i[2][2]*acc_pa[2];
+    acc[0] = R_bf2i[0][0]*acc_bf[0] + R_bf2i[0][1]*acc_bf[1] + R_bf2i[0][2]*acc_bf[2];
+    acc[1] = R_bf2i[1][0]*acc_bf[0] + R_bf2i[1][1]*acc_bf[1] + R_bf2i[1][2]*acc_bf[2];
+    acc[2] = R_bf2i[2][0]*acc_bf[0] + R_bf2i[2][1]*acc_bf[1] + R_bf2i[2][2]*acc_bf[2];
 }
 
 /* ============================================================
@@ -233,7 +245,8 @@ int spody_force_rhs_default(double t, const double *y, double *dy, void *user) {
 
     /* ---- 4. spherical harmonics (disturbing) ------------------ */
     if (ctx->hg && ctx->eph) {
-        spody_force_sphericalharmonics(ctx->hg, ctx->eph, et, r, acc_tmp);
+        spody_force_sphericalharmonics(ctx->hg, ctx->eph, et, r,
+                                       ctx->get_bf_rotation, acc_tmp);
         acc_pert[0] += acc_tmp[0];
         acc_pert[1] += acc_tmp[1];
         acc_pert[2] += acc_tmp[2];
@@ -282,6 +295,7 @@ void spody_force_breakdown(const ForceModelContext *ctx,
     /* spherical harmonics */
     if (ctx->hg && ctx->eph) {
         spody_force_sphericalharmonics(ctx->hg, ctx->eph, et, r,
+                                       ctx->get_bf_rotation,
                                        bd->acc_sphericalharmonics);
     }
 
