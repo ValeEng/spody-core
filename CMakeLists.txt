@@ -116,6 +116,7 @@ configure_file(
 # -----------------------------------------------------------------------------
 set(SOURCES
     src/spody_eclipse.c
+    src/spody_eop.c
     src/spody_ephemeris.c
     src/spody_events.c
     src/spody_forcemodels.c

@@ -23,6 +23,7 @@ extern "C" {
 
 #include "spody_version.h"
 #include "spody_ephemeris.h"
+#include "spody_eop.h"
 #include "spody_harmonics.h"
 #include "spody_eclipse.h"
 #include "spody_integrators.h"
