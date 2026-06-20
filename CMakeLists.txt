@@ -122,6 +122,7 @@ set(SOURCES
     src/spody_events.c
     src/spody_forcemodels.c
     src/spody_harmonics.c
+    src/spody_icgem.c
     src/spody_integrators.c
     src/spody_interp.c
     src/spody_io.c
