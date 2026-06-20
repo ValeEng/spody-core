@@ -115,6 +115,7 @@ configure_file(
 # Source files
 # -----------------------------------------------------------------------------
 set(SOURCES
+    src/spody_earth_orientation.c
     src/spody_eclipse.c
     src/spody_eop.c
     src/spody_ephemeris.c

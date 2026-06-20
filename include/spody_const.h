@@ -44,7 +44,7 @@ extern "C" {
 
 
     // Conversion units
-#define SECONDSxDAY 86400 
+#define SECONDSxDAY 86400
 #define KM2M 1000.0
 #define M2KM 0.001
 #define M2AU 6.684587122268445e-12
@@ -53,6 +53,19 @@ extern "C" {
 #define AU2KM 149597870.7
 #define DEG2RAD (PI/180.0)
 #define RAD2DEG (180.0/PI)
+
+    // Angle conversions (sub-degree). Used by the IAU 2006 Earth
+    // orientation pipeline where amplitudes are published in
+    // microarcseconds and EOP corrections in milliarcseconds.
+#define ARCSEC2RAD (PI / (180.0 * 3600.0))         // 1" -> rad
+#define MAS2RAD    (ARCSEC2RAD * 1.0e-3)           // 1 mas -> rad
+#define UAS2RAD    (ARCSEC2RAD * 1.0e-6)           // 1 uas -> rad
+
+    // Time scale: number of days in a Julian century (exact by
+    // definition). Used to convert ET (s past J2000) to TT Julian
+    // centuries, the argument expected by the IAU 2006 fundamental-
+    // argument polynomials and the precession-nutation series.
+#define DAYS_PER_JULIAN_CY 36525.0
 
 
     //gravitational parameters KM^3/s^2
