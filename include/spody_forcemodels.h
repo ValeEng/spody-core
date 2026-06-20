@@ -22,9 +22,24 @@ extern "C" {
 
 #include "spody_const.h"
 #include "spody_eclipse.h"
+#include "spody_eop.h"
 #include "spody_ephemeris.h"
 #include "spody_harmonics.h"
 #include "spody_integrators.h"   /* spody_rhs_fn */
+
+/* Forward declaration for Earth orientation per-thread handle.
+ * The full type lives in spody_earth_orientation.h (P2.2c); we
+ * only need the pointer here to keep the rotation callback
+ * generic without dragging the IAU 2006 tables into every TU. */
+struct MappedIAU2006;
+typedef struct MappedIAU2006 MappedIAU2006;
+
+/* Forward declaration for ForceModelContext: the rotation callback
+ * typedef below takes a pointer to it, and the struct definition
+ * itself stores a function pointer of that type, so we need both
+ * names available before either is complete. */
+struct ForceModelContext;
+typedef struct ForceModelContext ForceModelContext;
 
 /* Maximum number of third bodies that fit in a ForceBreakdown. The
  * ForceModelContext itself accepts an unbounded list, but the diagnostic
@@ -85,32 +100,35 @@ void spody_init_Spacecraft(Spacecraft *sc);
  * evaluate the field, and rotate the resulting acceleration back
  * to ICRF.
  *
- * Each known central body has its own implementation that "knows"
- * the body it serves (no need for a separate context pointer):
- *   - Moon  -> spody_bf_rotation_moon  (DE440 libration in slot 12)
- *   - Earth -> [TODO] GMST/IAU 2006 based
- *   - Mars  -> [TODO] IAU 2009 based
+ * The callback receives the full ForceModelContext so each body
+ * can pick the runtime inputs it needs:
+ *   - Moon  -> reads ctx->eph (DE440 libration in slot 12)
+ *   - Earth -> reads ctx->eop + ctx->iau2006
+ *               (IERS EOP + IAU 2006/2000A series)
+ *   - Mars  -> [TODO] IAU 2009 based, no runtime inputs
  *
- * `eph` is the only runtime input. Bodies whose orientation lives
- * in the ephemeris file (Moon librations) read it here; bodies
- * whose orientation comes from an analytic model independent of
- * the ephemeris (Earth via GMST) simply ignore the argument. */
-typedef void (*spody_bf_rotation_fn)(MappedEphemeris *eph, double et,
+ * Bodies whose orientation comes from purely analytic models with
+ * no per-step inputs simply ignore ctx. The contract is "pick what
+ * you need, leave the rest", which keeps the kernel kernel
+ * body-agnostic without forcing every body to declare a wrapper
+ * struct of its required inputs. */
+typedef void (*spody_bf_rotation_fn)(const ForceModelContext *ctx, double et,
                                       double R_icrf_to_bf[3][3],
                                       double R_bf_to_icrf[3][3]);
 
 /* Concrete provider: Moon Principal Axes from DE440 libration
  * angles. Equivalent to chaining
- *   spody_get_lunarlibrationangles(eph, et, angles);
+ *   spody_get_lunarlibrationangles(ctx->eph, et, angles);
  *   spody_getrotmatrix_icrf2moonpa(angles..., R_icrf_to_bf);
  *   spody_getrotmatrix_moonpa2icrf(angles..., R_bf_to_icrf);
  * but exposed as a function pointer so the force-model layer can
- * call it generically. */
-void spody_bf_rotation_moon(MappedEphemeris *eph, double et,
+ * call it generically. Reads `ctx->eph` (MUST be non-NULL); the
+ * other ctx fields are ignored. */
+void spody_bf_rotation_moon(const ForceModelContext *ctx, double et,
                              double R_icrf_to_bf[3][3],
                              double R_bf_to_icrf[3][3]);
 
-typedef struct {
+struct ForceModelContext {
     /* central body (the body the satellite orbits) */
     double  mu_central;          /* km^3/s^2                          */
     double  R_central;           /* km - mean radius (impact check)   */
@@ -120,7 +138,8 @@ typedef struct {
      * the spherical-harmonics force to rotate state ICRF <-> body
      * fixed frame at every RHS evaluation. Application fills this
      * based on the parsed central-body name; for Moon use
-     * `spody_bf_rotation_moon`. MUST be non-NULL when `hg` is set. */
+     * `spody_bf_rotation_moon`, for Earth `spody_bf_rotation_earth`.
+     * MUST be non-NULL when `hg` is set. */
     spody_bf_rotation_fn get_bf_rotation;
 
     /* spacecraft */
@@ -130,8 +149,20 @@ typedef struct {
     HarmonicGravity *hg;
 
     /* ephemeris-driven perturbations (NULL = disabled). Must be
-     * non-NULL whenever hg, n_third > 0, or enable_srp are active. */
+     * non-NULL whenever hg, n_third > 0, or enable_srp are active.
+     * Also consumed by `spody_bf_rotation_moon` to read the lunar
+     * libration angles from DE440 slot 12. */
     MappedEphemeris *eph;
+
+    /* Per-thread Earth-orientation handles, consumed by
+     * `spody_bf_rotation_earth` (P2.2). NULL when the central body
+     * is not Earth: the Moon callback ignores them, so leaving
+     * them unset has no effect on lunar runs. The application sets
+     * them up from the TOML's `force_model.eop_file` and
+     * `force_model.iau2006_dir` fields, which are written only
+     * when central_body = "Earth". */
+    MappedEOP     *eop;
+    MappedIAU2006 *iau2006;
 
     /* third bodies: parallel arrays of NAIF ids and GMs.
      * n_third == 0 disables third-body perturbations. */
@@ -155,7 +186,7 @@ typedef struct {
      * Use ET_FROM_JD(jd) from spody_const.h to convert from a JD epoch.
      * et0 = 0 corresponds to the J2000 epoch itself. */
     double  et0;
-} ForceModelContext;
+};
 
 /* ============================================================
  * Atomic force functions
@@ -170,18 +201,21 @@ typedef struct {
 void spody_force_twobody(double mu, const double r_sat[3], double acc_out[3]);
 
 /* Disturbing part of the central-body spherical-harmonic gravity.
- * Calls `get_R` to obtain the ICRF<->body-fixed rotations at `et`,
+ * Pulls the harmonic-gravity handle from `ctx->hg`, evaluates the
+ * ICRF<->body-fixed rotations at `et` via `ctx->get_bf_rotation`
+ * (passing `ctx` through so the callback can pick its body-specific
+ * inputs from ctx->eph / ctx->eop / ctx->iau2006 as needed),
  * transforms `r_sat` into the body-fixed frame, evaluates the
- * harmonic series with `hg`, and transforms the resulting
- * acceleration back to ICRF. `get_R` MUST be non-NULL; for the
- * Moon use `spody_bf_rotation_moon`.
+ * harmonic series, and transforms the resulting acceleration back
+ * to ICRF.
+ *
+ * `ctx->hg` and `ctx->get_bf_rotation` MUST be non-NULL.
  *
  * Note: returns ONLY the J2-and-higher disturbing acceleration; the
  * 2-body term must be summed separately (this matches the contract
  * of spody_get_hgaccbodyfixed_hpc, which starts the recurrence at n=2). */
-void spody_force_sphericalharmonics(HarmonicGravity *hg, MappedEphemeris *eph,
+void spody_force_sphericalharmonics(const ForceModelContext *ctx,
                                     double et, const double r_sat[3],
-                                    spody_bf_rotation_fn get_R,
                                     double acc_out[3]);
 
 /* Cowell formulation of the third-body perturbation (Battin):
