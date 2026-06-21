@@ -187,6 +187,19 @@ double spody_iau2006_era(double jd_ut1);
 void spody_iau2006_polar_motion(double t_tt_cy, double xp_rad, double yp_rad,
                                   double W[3][3]);
 
+/* Forward declaration of the typedef-name `ForceModelContext`.
+ * Defined in full in spody_forcemodels.h. Declared here so
+ * spody_bf_rotation_earth's signature uses the SAME tag-name resolution
+ * the .c file does -- a `struct ForceModelContext *` parameter declared
+ * before the typedef is in scope would otherwise become a fresh
+ * function-local struct type under strict C, and gcc / clang flag the
+ * resulting prototype-vs-definition mismatch as a hard error. MSVC is
+ * lenient and resolves the name to the global struct, hiding the bug
+ * on Windows. The forward typedef below makes the two compilers agree.
+ */
+struct ForceModelContext;
+typedef struct ForceModelContext ForceModelContext;
+
 /* Top-level rotation: ICRF (GCRS) <-> ITRF at the given ET.
  *
  * Mirrors `spody_bf_rotation_moon` in shape (matches the
@@ -200,7 +213,7 @@ void spody_iau2006_polar_motion(double t_tt_cy, double xp_rad, double yp_rad,
  * Both pointers MUST be non-NULL when this callback is registered
  * as ctx->get_bf_rotation. The Moon callback ignores them, so a
  * lunar run can leave them unset (NULL). */
-void spody_bf_rotation_earth(const struct ForceModelContext *ctx, double et,
+void spody_bf_rotation_earth(const ForceModelContext *ctx, double et,
                               double R_icrf_to_bf[3][3],
                               double R_bf_to_icrf[3][3]);
 
