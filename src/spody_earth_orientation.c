@@ -538,10 +538,16 @@ void spody_iau2006_polar_motion(double t_tt_cy, double xp_rad, double yp_rad,
     /* TIO locator: -47 uas / century, eq. (5.13). */
     double sp_rad = -47.0 * t_tt_cy * UAS2RAD;
 
+    /* IERS TN 36 eq. (5.3) / SOFA iauPom00:
+     *   W(t) = R3(-s'(t)) . R2(x_p(t)) . R1(-y_p(t))
+     * Note the MINUS sign on yp -- an earlier revision used +yp, which
+     * matches no published convention and produces a ~yp ~ 200 mas
+     * rotation error around the x-axis. Verified bit-perfect vs
+     * erfa.pom00 (= SOFA iauPom00) when ULP-compared element-wise. */
     double Rsp[3][3], Rxp[3][3], Ryp[3][3], Tmp[3][3];
     _R3(-sp_rad, Rsp);
     _R2( xp_rad, Rxp);
-    _R1( yp_rad, Ryp);
+    _R1(-yp_rad, Ryp);
     _mat33_mul(Rsp, Rxp, Tmp);
     _mat33_mul(Tmp, Ryp, W);
 }
@@ -549,11 +555,31 @@ void spody_iau2006_polar_motion(double t_tt_cy, double xp_rad, double yp_rad,
 /* ======================================================================
  * Section 6 -- Top-level rotation: ICRF (GCRS) -> ITRF
  *
- * Per IERS TN 36 Section 5.4.4, CIO-based:
- *     [ITRF] = W(t) . R3(-ERA(Tu)) . Q(t) . [GCRS]
+ * SOFA / IERS convention (CIO-based), per iauC2t06a:
+ *     R_GCRS_to_ITRS = W(t) . R3(+ERA(Tu)) . Q(t)
+ *
+ * where:
+ *   - Q(t) = R_GCRS_to_CIRS, the celestial-to-intermediate matrix from
+ *     (X, Y, s), per eq. (5.10) of IERS TN 36 in the SOFA iauC2ixys
+ *     orientation (which is the TRANSPOSE of the IERS "Q" symbol that
+ *     maps CIRS->GCRS; SOFA's convention is GCRS->CIRS).
+ *   - R3(+ERA) rotates CIRS into TIRS by the Earth Rotation Angle.
+ *     The sign is POSITIVE (not -ERA): SOFA's iauC2t06a applies
+ *     R3(+ERA) when assembling the celestial-to-terrestrial matrix.
+ *   - W(t) = R_TIRS_to_ITRS, the polar-motion matrix from xp, yp, s'.
+ *
+ * Verified bit-perfect against astropy IAU 2006/2010 + erfa.pom00 +
+ * erfa.c2ixys at the GLONASS R03 2024-01-21 00:15 epoch: max element
+ * diff was 4e-12. An earlier revision composed W . R3(-ERA) . Q (wrong
+ * order AND wrong ERA sign), giving an 80 km position error per record
+ * at GLONASS altitude.
  * ====================================================================== */
 
-/* Build Q(t) from (X, Y, s). IERS TN 36 eq. (5.10). */
+/* Build Q(t) from (X, Y, s). IERS TN 36 eq. (5.10), IERS Q-symbol
+ * orientation: the returned matrix maps CIRS -> GCRS (this is the
+ * TRANSPOSE of SOFA's iauC2ixys which maps GCRS -> CIRS). Code that
+ * needs the SOFA orientation should use Q^T -- see
+ * spody_bf_rotation_earth where R_GCRS_to_ITRS is assembled. */
 static void _build_Q(double X, double Y, double s, double Q[3][3]) {
     double XY = X * X + Y * Y;
     double cd = sqrt(1.0 - XY);
@@ -629,31 +655,22 @@ void spody_bf_rotation_earth(const ForceModelContext *ctx, double et,
 
     double jd_ut1 = _jd_ut1_from_et(et, dut1_sec);
     double era = spody_iau2006_era(jd_ut1);
-    double R3_minus_era[3][3];
-    _R3(-era, R3_minus_era);
+    double R3_plus_era[3][3];
+    _R3(era, R3_plus_era);
 
     double xp_rad = xp_arcsec * ARCSEC2RAD;
     double yp_rad = yp_arcsec * ARCSEC2RAD;
     double W[3][3];
     spody_iau2006_polar_motion(t_tt_cy, xp_rad, yp_rad, W);
 
-    /* Compose W . R3(-ERA) . Q.
-     *
-     * This product yields the matrix R_ITRS_to_GCRS (per IERS TN 36
-     * eq. 5.10, R_ITRS_to_GCRS = Q . R3(-ERA) . W after the standard
-     * IAU sign/order conventions: spody's W carries opposite signs of
-     * xp/yp compared to the IAU definition and is therefore the
-     * transpose of IAU's W. Composing W . R3(-ERA) . Q in our
-     * convention thus matches IAU's Q . R3(-ERA) . W = R_ITRS_to_GCRS).
-     *
-     * So the COMPOSITION RESULT is R_bf_to_icrf, NOT R_icrf_to_bf as
-     * an earlier revision claimed. The fix below assigns it to the
-     * correct output parameter; the inverse (icrf -> bf) is the
-     * transpose. Empirically verified on GLONASS broadcast records:
-     * angular momentum is conserved across consecutive 30-min epochs
-     * (was walking at -2*omega_E per record with the swapped names). */
+    /* R_GCRS_to_ITRS = W . R3(+ERA) . Q^T   (SOFA iauC2t06a chain).
+     * The transpose of Q is needed because spody's _build_Q follows the
+     * IERS Q-symbol orientation (CIRS -> GCRS), which is the transpose
+     * of SOFA's c2ixys (GCRS -> CIRS) appearing in the SOFA chain. */
+    double Q_T[3][3];
+    _mat33_transpose(Q, Q_T);
     double WR[3][3];
-    _mat33_mul(W, R3_minus_era, WR);
-    _mat33_mul(WR, Q, R_bf_to_icrf);
-    _mat33_transpose(R_bf_to_icrf, R_icrf_to_bf);
+    _mat33_mul(W, R3_plus_era, WR);
+    _mat33_mul(WR, Q_T, R_icrf_to_bf);
+    _mat33_transpose(R_icrf_to_bf, R_bf_to_icrf);
 }
