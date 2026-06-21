@@ -309,13 +309,26 @@ int spody_convert_glonass_to_state_icrf(const char *input_rnx,
         _rot3_apply(R_bf2i, r_ecef, r_icrf);
         _rot3_apply(R_bf2i, v_ecef, v_icrf_rot);
 
-        /* omega_earth x r_ICRF, with omega along the ICRF z-axis
-         * (nominal -- polar-motion corrections to the axis are
-         * smaller than the broadcast (r, v) precision). */
+        /* omega_earth x r_ICRF with the FULL rotation axis. At J2024 the
+         * ITRS z-axis (= Earth's mean rotation axis) is tilted by
+         * X ~ 480 arcsec from the ICRF z-axis due to precession; using
+         * a nominal omega = (0, 0, omega_earth) would miss ~omega*X*r ~
+         * 4 m/s at GLONASS altitude. The true axis in ICRF is the third
+         * column of R_bf_to_icrf (image of ITRS z-hat under the rotation).
+         * Polar motion of the actual instantaneous axis from the mean
+         * ITRS axis is sub-arcsec and ignored. */
+        double omega_icrf[3] = {
+            SPODY_OMEGA_EARTH_RADPS * R_bf2i[0][2],
+            SPODY_OMEGA_EARTH_RADPS * R_bf2i[1][2],
+            SPODY_OMEGA_EARTH_RADPS * R_bf2i[2][2],
+        };
         double v_icrf[3];
-        v_icrf[0] = v_icrf_rot[0] - SPODY_OMEGA_EARTH_RADPS * r_icrf[1];
-        v_icrf[1] = v_icrf_rot[1] + SPODY_OMEGA_EARTH_RADPS * r_icrf[0];
-        v_icrf[2] = v_icrf_rot[2];
+        v_icrf[0] = v_icrf_rot[0]
+                  + omega_icrf[1] * r_icrf[2] - omega_icrf[2] * r_icrf[1];
+        v_icrf[1] = v_icrf_rot[1]
+                  + omega_icrf[2] * r_icrf[0] - omega_icrf[0] * r_icrf[2];
+        v_icrf[2] = v_icrf_rot[2]
+                  + omega_icrf[0] * r_icrf[1] - omega_icrf[1] * r_icrf[0];
 
         double rec[7] = {
             et,
