@@ -296,6 +296,12 @@ int spody_convert_icgem_to_tab(const char *input_gfc,
      * the origin is at the body's centre of mass. Padding them to zero
      * matches data/GRGM1200B/gggrx_1200b_sha.tab. */
     size_t rows_written = 0;
+    /* Periodic progress markers for GUI auto-convert. Print every 100
+     * degrees so the wizard's progress bar updates a few dozen times
+     * over the multi-second N=2190 run. Format mirrors the DE440 path
+     * convention: "<tag>: <thing> writed" so the same parser style
+     * applies, distinguishable from the start/end banner by the "n="
+     * prefix. */
     for (int n = 1; n <= output_N; ++n) {
         for (int m = 0; m <= n; ++m) {
             size_t idx = _tri_index(n, m);
@@ -303,6 +309,10 @@ int spody_convert_icgem_to_tab(const char *input_gfc,
                 "%5d,%4d,%22.16E,%22.16E,%22.16E,%22.16E\n",
                 n, m, C[idx], S[idx], sC[idx], sS[idx]);
             ++rows_written;
+        }
+        if (n % 100 == 0 || n == output_N) {
+            fprintf(stderr, "icgem: n=%d / %d writed\n", n, output_N);
+            fflush(stderr);
         }
     }
 
