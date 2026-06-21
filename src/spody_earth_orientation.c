@@ -637,11 +637,23 @@ void spody_bf_rotation_earth(const ForceModelContext *ctx, double et,
     double W[3][3];
     spody_iau2006_polar_motion(t_tt_cy, xp_rad, yp_rad, W);
 
-    /* Compose R_icrf_to_itrf = W . R3(-ERA) . Q */
+    /* Compose W . R3(-ERA) . Q.
+     *
+     * This product yields the matrix R_ITRS_to_GCRS (per IERS TN 36
+     * eq. 5.10, R_ITRS_to_GCRS = Q . R3(-ERA) . W after the standard
+     * IAU sign/order conventions: spody's W carries opposite signs of
+     * xp/yp compared to the IAU definition and is therefore the
+     * transpose of IAU's W. Composing W . R3(-ERA) . Q in our
+     * convention thus matches IAU's Q . R3(-ERA) . W = R_ITRS_to_GCRS).
+     *
+     * So the COMPOSITION RESULT is R_bf_to_icrf, NOT R_icrf_to_bf as
+     * an earlier revision claimed. The fix below assigns it to the
+     * correct output parameter; the inverse (icrf -> bf) is the
+     * transpose. Empirically verified on GLONASS broadcast records:
+     * angular momentum is conserved across consecutive 30-min epochs
+     * (was walking at -2*omega_E per record with the swapped names). */
     double WR[3][3];
     _mat33_mul(W, R3_minus_era, WR);
-    _mat33_mul(WR, Q, R_icrf_to_bf);
-
-    /* Inverse: transpose (orthonormal). */
-    _mat33_transpose(R_icrf_to_bf, R_bf_to_icrf);
+    _mat33_mul(WR, Q, R_bf_to_icrf);
+    _mat33_transpose(R_bf_to_icrf, R_icrf_to_bf);
 }
