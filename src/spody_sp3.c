@@ -250,8 +250,12 @@ int spody_convert_sp3_to_state_icrf(const char *input_sp3,
         double pos_icrf[3];
         _rot3_apply(R_bf2i, pos_itrf, pos_icrf);
 
+        /* Time column = integrator's 0-based t, matching sim_run.c
+         * emit_trajectory. See the same fix on the GLONASS path; the
+         * GUI analysis diff aligns by this column. */
+        if (n_records == 0) et_first = cur_et;
         double rec[7] = {
-            cur_et,
+            cur_et - et_first,
             pos_icrf[0], pos_icrf[1], pos_icrf[2],
             0.0, 0.0, 0.0
         };
@@ -266,7 +270,6 @@ int spody_convert_sp3_to_state_icrf(const char *input_sp3,
             spody_free_MappedEOPData(&eop_data);
             return 1;
         }
-        if (n_records == 0) et_first = cur_et;
         et_last = cur_et;
         ++n_records;
     }

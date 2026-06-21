@@ -330,8 +330,16 @@ int spody_convert_glonass_to_state_icrf(const char *input_rnx,
         v_icrf[2] = v_icrf_rot[2]
                   + omega_icrf[0] * r_icrf[1] - omega_icrf[1] * r_icrf[0];
 
+        /* The time column of every SPDYOUT_ record is the integrator's
+         * 0-based t (seconds since the run's first sample), matching
+         * sim_run.c's emit_trajectory contract. Downstream tooling --
+         * GUI analysis panel diff, batch event aggregator -- aligns
+         * propagator and reference by this column, so the converter
+         * must zero-anchor it. Absolute ET past J2000 is recoverable
+         * from the [simulation].et_start_s field in the run TOML. */
+        if (n_written == 0) et_first = et;
         double rec[7] = {
-            et,
+            et - et_first,
             r_icrf[0], r_icrf[1], r_icrf[2],
             v_icrf[0], v_icrf[1], v_icrf[2]
         };
@@ -346,7 +354,6 @@ int spody_convert_glonass_to_state_icrf(const char *input_rnx,
             spody_free_MappedEOPData(&eop_data);
             return 1;
         }
-        if (n_written == 0) et_first = et;
         et_last = et;
         ++n_written;
     }
