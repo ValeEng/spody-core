@@ -69,21 +69,34 @@
 extern "C" {
 #endif
 
-/* Convert one satellite's broadcast track from *input_rnx* into
- * *output_bin*. Returns 0 on success, non-zero on any IO / parse /
- * write failure (error message printed to stderr).
+/* Convert one satellite's broadcast track from one or more RINEX
+ * input files into a single concatenated *output_bin*. Returns 0 on
+ * success, non-zero on any IO / parse / write failure (error message
+ * printed to stderr).
+ *
+ * Multi-file mode is the workhorse for week-long (or longer) GNSS
+ * validations: IGS-BKG ships GLONASS broadcast nav as one RINEX file
+ * per UTC day, so a 7-day window is 7 daily files passed in
+ * chronological order. The converter concatenates them into one
+ * SPDYOUT_ binary with a single header and a continuous, 0-anchored
+ * time axis (every record's t = et - et_of_first_record_overall, no
+ * gaps at day boundaries). Calling with n_inputs==1 reproduces the
+ * single-file behaviour bit-for-bit.
  *
  * Arguments:
- *   input_rnx    : path to the RINEX 3.x nav file (GLONASS or mixed).
- *   output_bin   : path for the SPDYOUT_ binary to be written.
- *   sat_id       : 3-char GLONASS slot id, e.g. "R03". Case-sensitive.
- *   eop_file     : path to IERS finals2000A.all.
- *   iau2006_dir  : path to the directory containing tab5.2{a,b,d}.txt.
+ *   n_inputs          : number of RINEX paths (>= 1).
+ *   input_rnx_paths   : array of length n_inputs, paths to RINEX 3.x
+ *                       nav files in chronological order.
+ *   output_bin        : path for the SPDYOUT_ binary to be written.
+ *   sat_id            : 3-char GLONASS slot id, e.g. "R03". Case-sensitive.
+ *   eop_file          : path to IERS finals2000A.all.
+ *   iau2006_dir       : path to the directory containing tab5.2{a,b,d}.txt.
  *
- * Side effects: an informational summary printed to stderr (sat id,
- * record count, time span).
+ * Side effects: per-file and aggregate informational summaries printed
+ * to stderr (sat id, record count, time span).
  */
-int spody_convert_glonass_to_state_icrf(const char *input_rnx,
+int spody_convert_glonass_to_state_icrf(int n_inputs,
+                                        const char *const *input_rnx_paths,
                                         const char *output_bin,
                                         const char *sat_id,
                                         const char *eop_file,

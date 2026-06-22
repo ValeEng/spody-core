@@ -118,73 +118,25 @@ static int _write_glonass_out_header(FILE *fp) {
     return 0;
 }
 
-int spody_convert_glonass_to_state_icrf(const char *input_rnx,
-                                        const char *output_bin,
-                                        const char *sat_id,
-                                        const char *eop_file,
-                                        const char *iau2006_dir) {
-    if (!input_rnx || !output_bin || !sat_id || !eop_file || !iau2006_dir) {
-        fprintf(stderr, "glonass: NULL argument\n");
-        return 1;
-    }
-    if (strlen(sat_id) != 3 || (sat_id[0] != 'R')) {
-        fprintf(stderr,
-            "glonass: sat_id must be 3 chars starting with 'R' "
-            "(got '%s')\n", sat_id);
-        return 1;
-    }
-
-    /* --- Bring up EOP + IAU 2006 -------------------------------- */
-    MappedEOPData eop_data = {0};
-    if (spody_setup_MappedEOPData(&eop_data, eop_file) != 0) {
-        fprintf(stderr, "glonass: cannot load EOP from '%s'\n", eop_file);
-        return 1;
-    }
-    MappedIAU2006Data iau_data = {0};
-    if (spody_setup_MappedIAU2006Data(&iau_data, iau2006_dir) != 0) {
-        fprintf(stderr, "glonass: cannot load IAU 2006 from '%s'\n",
-                iau2006_dir);
-        spody_free_MappedEOPData(&eop_data);
-        return 1;
-    }
-    MappedEOP     eop_map = {0};
-    MappedIAU2006 iau_map = {0};
-    spody_setup_MappedEOP(&eop_map, &eop_data);
-    spody_setup_MappedIAU2006(&iau_map, &iau_data);
-    ForceModelContext ctx = { .eop = &eop_map, .iau2006 = &iau_map };
-
-    /* --- IO ----------------------------------------------------- */
-    FILE *fin = fopen(input_rnx, "r");
-    if (!fin) {
-        fprintf(stderr, "glonass: cannot open input '%s'\n", input_rnx);
-        spody_free_MappedIAU2006(&iau_map);
-        spody_free_MappedEOP(&eop_map);
-        spody_free_MappedIAU2006Data(&iau_data);
-        spody_free_MappedEOPData(&eop_data);
-        return 1;
-    }
-    FILE *fout = fopen(output_bin, "wb");
-    if (!fout) {
-        fprintf(stderr, "glonass: cannot open output '%s'\n", output_bin);
-        fclose(fin);
-        spody_free_MappedIAU2006(&iau_map);
-        spody_free_MappedEOP(&eop_map);
-        spody_free_MappedIAU2006Data(&iau_data);
-        spody_free_MappedEOPData(&eop_data);
-        return 1;
-    }
-    if (_write_glonass_out_header(fout) != 0) {
-        fprintf(stderr, "glonass: cannot write output header\n");
-        fclose(fout); fclose(fin);
-        spody_free_MappedIAU2006(&iau_map);
-        spody_free_MappedEOP(&eop_map);
-        spody_free_MappedIAU2006Data(&iau_data);
-        spody_free_MappedEOPData(&eop_data);
-        return 1;
-    }
+/* Scan one open RINEX nav file (header already skipped) and append
+ * SPDYOUT_ records for *sat_id* to *fout*. Cross-file accumulators
+ * (et_first, et_last, n_written) live in the caller so the time
+ * column stays 0-anchored to the very first record across all inputs
+ * and the multi-file summary is correct. *n_total_out* receives the
+ * count of nav records of any satellite scanned in this file.
+ * Returns 0 on success, non-zero on parse / write failure. */
+static int _glonass_scan_file(FILE *fin,
+                              FILE *fout,
+                              const char *input_rnx,
+                              const char *sat_id,
+                              const ForceModelContext *ctx,
+                              size_t *n_total_out,
+                              size_t *n_written_inout,
+                              double *et_first_inout,
+                              double *et_last_inout) {
+    char line[SPODY_RINEX_LINE];
 
     /* --- Skip header until "END OF HEADER" ---------------------- */
-    char line[SPODY_RINEX_LINE];
     int in_body = 0;
     while (fgets(line, sizeof line, fin)) {
         /* The "END OF HEADER" marker is right-justified in the
@@ -199,18 +151,13 @@ int spody_convert_glonass_to_state_icrf(const char *input_rnx,
         fprintf(stderr,
             "glonass: input '%s' has no 'END OF HEADER' marker\n",
             input_rnx);
-        fclose(fout); fclose(fin);
-        spody_free_MappedIAU2006(&iau_map);
-        spody_free_MappedEOP(&eop_map);
-        spody_free_MappedIAU2006Data(&iau_data);
-        spody_free_MappedEOPData(&eop_data);
         return 1;
     }
 
-    /* --- Body: scan for sat_id records, write SPDYOUT_ rows ----- */
-    size_t n_total      = 0;
-    size_t n_written    = 0;
-    double et_first     = 0.0, et_last = 0.0;
+    size_t n_total            = 0;
+    size_t n_written_this     = 0;
+    double et_first_this      = 0.0;
+    double et_last_this       = 0.0;
 
     while (fgets(line, sizeof line, fin)) {
         /* PRN row begins with the 3-char sat id at column 0. Other
@@ -301,7 +248,7 @@ int spody_convert_glonass_to_state_icrf(const char *input_rnx,
 
         /* --- Rotation ECEF -> ICRF ----------------------------- */
         double R_i2bf[3][3], R_bf2i[3][3];
-        spody_bf_rotation_earth(&ctx, et, R_i2bf, R_bf2i);
+        spody_bf_rotation_earth(ctx, et, R_i2bf, R_bf2i);
 
         double r_ecef[3] = { px, py, pz };
         double v_ecef[3] = { vx, vy, vz };
@@ -336,48 +283,160 @@ int spody_convert_glonass_to_state_icrf(const char *input_rnx,
          * GUI analysis panel diff, batch event aggregator -- aligns
          * propagator and reference by this column, so the converter
          * must zero-anchor it. Absolute ET past J2000 is recoverable
-         * from the [simulation].et_start_s field in the run TOML. */
-        if (n_written == 0) et_first = et;
+         * from the [simulation].et_start_s field in the run TOML.
+         *
+         * Multi-file mode: et_first is anchored on the FIRST written
+         * record across ALL input files (the caller-owned
+         * *et_first_inout), so the 7-day binary's t starts at 0 and
+         * grows continuously across day boundaries. */
+        if (*n_written_inout == 0) *et_first_inout = et;
+        if (n_written_this == 0)   et_first_this   = et;
         double rec[7] = {
-            et - et_first,
+            et - *et_first_inout,
             r_icrf[0], r_icrf[1], r_icrf[2],
             v_icrf[0], v_icrf[1], v_icrf[2]
         };
         if (fwrite(rec, sizeof(double), 7, fout) != 7) {
             fprintf(stderr,
                 "glonass: short write at record %zu (et=%.6f)\n",
-                n_written, et);
-            fclose(fout); fclose(fin);
-            spody_free_MappedIAU2006(&iau_map);
-            spody_free_MappedEOP(&eop_map);
-            spody_free_MappedIAU2006Data(&iau_data);
-            spody_free_MappedEOPData(&eop_data);
+                *n_written_inout, et);
             return 1;
         }
-        et_last = et;
-        ++n_written;
+        *et_last_inout = et;
+        et_last_this   = et;
+        ++(*n_written_inout);
+        ++n_written_this;
     }
 
-    fclose(fout);
-    fclose(fin);
-
-    if (n_written == 0) {
+    if (n_written_this == 0) {
         fprintf(stderr,
             "glonass: WARNING -- no records written for sat_id '%s' "
             "(scanned %zu total RINEX records in '%s')\n",
             sat_id, n_total, input_rnx);
     } else {
-        double duration_h = (et_last - et_first) / 3600.0;
+        double duration_h = (et_last_this - et_first_this) / 3600.0;
         fprintf(stderr,
             "glonass: '%s' -> %zu records (sat=%s, et=%.6f..%.6f, "
             "%.3f h, scanned %zu nav messages)\n",
-            input_rnx, n_written, sat_id, et_first, et_last,
-            duration_h, n_total);
+            input_rnx, n_written_this, sat_id,
+            et_first_this, et_last_this, duration_h, n_total);
+    }
+
+    *n_total_out = n_total;
+    return 0;
+}
+
+
+int spody_convert_glonass_to_state_icrf(int n_inputs,
+                                        const char *const *input_rnx_paths,
+                                        const char *output_bin,
+                                        const char *sat_id,
+                                        const char *eop_file,
+                                        const char *iau2006_dir) {
+    if (n_inputs <= 0 || !input_rnx_paths || !output_bin ||
+        !sat_id || !eop_file || !iau2006_dir) {
+        fprintf(stderr, "glonass: NULL argument or empty input list\n");
+        return 1;
+    }
+    for (int i = 0; i < n_inputs; ++i) {
+        if (!input_rnx_paths[i]) {
+            fprintf(stderr, "glonass: NULL input path at index %d\n", i);
+            return 1;
+        }
+    }
+    if (strlen(sat_id) != 3 || (sat_id[0] != 'R')) {
+        fprintf(stderr,
+            "glonass: sat_id must be 3 chars starting with 'R' "
+            "(got '%s')\n", sat_id);
+        return 1;
+    }
+
+    /* --- Bring up EOP + IAU 2006 -------------------------------- */
+    MappedEOPData eop_data = {0};
+    if (spody_setup_MappedEOPData(&eop_data, eop_file) != 0) {
+        fprintf(stderr, "glonass: cannot load EOP from '%s'\n", eop_file);
+        return 1;
+    }
+    MappedIAU2006Data iau_data = {0};
+    if (spody_setup_MappedIAU2006Data(&iau_data, iau2006_dir) != 0) {
+        fprintf(stderr, "glonass: cannot load IAU 2006 from '%s'\n",
+                iau2006_dir);
+        spody_free_MappedEOPData(&eop_data);
+        return 1;
+    }
+    MappedEOP     eop_map = {0};
+    MappedIAU2006 iau_map = {0};
+    spody_setup_MappedEOP(&eop_map, &eop_data);
+    spody_setup_MappedIAU2006(&iau_map, &iau_data);
+    ForceModelContext ctx = { .eop = &eop_map, .iau2006 = &iau_map };
+
+    /* --- Output (one binary for the whole concatenated track) --- */
+    FILE *fout = fopen(output_bin, "wb");
+    if (!fout) {
+        fprintf(stderr, "glonass: cannot open output '%s'\n", output_bin);
+        spody_free_MappedIAU2006(&iau_map);
+        spody_free_MappedEOP(&eop_map);
+        spody_free_MappedIAU2006Data(&iau_data);
+        spody_free_MappedEOPData(&eop_data);
+        return 1;
+    }
+    if (_write_glonass_out_header(fout) != 0) {
+        fprintf(stderr, "glonass: cannot write output header\n");
+        fclose(fout);
+        spody_free_MappedIAU2006(&iau_map);
+        spody_free_MappedEOP(&eop_map);
+        spody_free_MappedIAU2006Data(&iau_data);
+        spody_free_MappedEOPData(&eop_data);
+        return 1;
+    }
+
+    /* --- Loop over input files; share et_first across all of them */
+    size_t n_total_all   = 0;
+    size_t n_written_all = 0;
+    double et_first_all  = 0.0;
+    double et_last_all   = 0.0;
+    int    rc            = 0;
+
+    for (int i = 0; i < n_inputs; ++i) {
+        const char *input_rnx = input_rnx_paths[i];
+        FILE *fin = fopen(input_rnx, "r");
+        if (!fin) {
+            fprintf(stderr, "glonass: cannot open input '%s'\n", input_rnx);
+            rc = 1;
+            break;
+        }
+        size_t n_total_file = 0;
+        int file_rc = _glonass_scan_file(fin, fout, input_rnx, sat_id, &ctx,
+                                          &n_total_file, &n_written_all,
+                                          &et_first_all, &et_last_all);
+        fclose(fin);
+        n_total_all += n_total_file;
+        if (file_rc != 0) { rc = file_rc; break; }
+    }
+
+    fclose(fout);
+
+    if (rc == 0) {
+        if (n_written_all == 0) {
+            fprintf(stderr,
+                "glonass: WARNING -- no records written for sat_id '%s' "
+                "across %d input file%s (scanned %zu RINEX nav messages "
+                "total)\n",
+                sat_id, n_inputs, n_inputs == 1 ? "" : "s", n_total_all);
+        } else if (n_inputs > 1) {
+            double duration_h = (et_last_all - et_first_all) / 3600.0;
+            fprintf(stderr,
+                "glonass: aggregate -> %zu records across %d files "
+                "(sat=%s, et=%.6f..%.6f, %.3f h, scanned %zu nav "
+                "messages total)\n",
+                n_written_all, n_inputs, sat_id,
+                et_first_all, et_last_all, duration_h, n_total_all);
+        }
     }
 
     spody_free_MappedIAU2006(&iau_map);
     spody_free_MappedEOP(&eop_map);
     spody_free_MappedIAU2006Data(&iau_data);
     spody_free_MappedEOPData(&eop_data);
-    return 0;
+    return rc;
 }
