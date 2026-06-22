@@ -130,6 +130,7 @@ set(SOURCES
     src/spody_math.c
     src/spody_mission.c
     src/spody_glonass.c
+    src/spody_gps.c
     src/spody_solver.c
     src/spody_sp3.c
     src/spody_version.c

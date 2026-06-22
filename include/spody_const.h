@@ -67,6 +67,21 @@ extern "C" {
     // argument polynomials and the precession-nutation series.
 #define DAYS_PER_JULIAN_CY 36525.0
 
+    // GNSS time-scale offsets. GPS time is locked to TAI - 19 s
+    // exactly since 1980-01-06, so the bridge to TT (= TAI + 32.184)
+    // is a single constant -- no leap-second table required. GLONASS
+    // broadcast TOC is UTC and still needs the (TAI - UTC) leap chain
+    // (37 s post-2017).
+#define GPST2TT_SEC      51.184          // TT - GPST (= 19 + 32.184)
+#define TT2TAI_SEC       (-32.184)       // TAI - TT (exact)
+
+    // Earth rotation rate. IERS Conventions 2010 sec. 1.4 nominal
+    // sidereal value; identical to WGS-84 / GLONASS-ICD / GPS-ICD
+    // omega_e at 1e-12. Polar-motion corrections to the instantaneous
+    // axis are sub-arcsec and ignored where this constant is used
+    // (GNSS broadcast ECEF -> ICRF velocity).
+#define EARTH_ROT_RATE_RADPS 7.2921151467e-5
+
 
     //gravitational parameters KM^3/s^2
 #define EARTH_MU 398600.4415 //398600.435507 //KM -->//(GRAV_CONST * EARTH_MASS) // m^3 s^-2

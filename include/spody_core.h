@@ -29,6 +29,7 @@ extern "C" {
 #include "spody_icgem.h"
 #include "spody_sp3.h"
 #include "spody_glonass.h"
+#include "spody_gps.h"
 #include "spody_eclipse.h"
 #include "spody_integrators.h"
 #include "spody_solver.h"
