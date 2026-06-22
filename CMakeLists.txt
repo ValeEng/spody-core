@@ -28,7 +28,7 @@
 # =============================================================================
 
 cmake_minimum_required(VERSION 3.10)
-project(spody_core VERSION 1.1.0 LANGUAGES C)
+project(spody_core VERSION 1.2.0 LANGUAGES C)
 
 # -----------------------------------------------------------------------------
 # User-configurable options
