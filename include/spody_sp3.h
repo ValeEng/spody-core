@@ -57,26 +57,37 @@
 extern "C" {
 #endif
 
-/* Convert one satellite's track from *input_sp3* into *output_bin*.
+/* Convert one satellite's track from one or more SP3 inputs into a
+ * single concatenated *output_bin*. Returns 0 on success, non-zero
+ * on any IO / parse / write failure (error message printed to stderr).
  *
- * Returns 0 on success, non-zero on any IO / parse / write failure
- * (error message printed to stderr).
+ * Multi-file mode: IGS final products ship one SP3 file per UTC day,
+ * so a week-long cm-precision reference is 7 daily files passed in
+ * chronological order. The converter concatenates them into one
+ * SPDYOUT_ binary with a single header and a continuous 0-anchored
+ * time axis (every record's t = et - et_of_first_record_overall,
+ * no gaps at day boundaries). Calling with n_inputs==1 reproduces
+ * the single-file behaviour bit-for-bit.
  *
  * Arguments:
- *   input_sp3    : path to the IGS .sp3 file (text).
- *   output_bin   : path for the SPDYOUT_ binary to be written.
- *   sat_id       : 3-character SP3 satellite identifier, e.g. "G11"
- *                  for GPS PRN 11, "E03" for Galileo E03, "R23" for
- *                  GLONASS slot 23. Case-sensitive, matched to the
- *                  first 3 characters of every "P<id> x y z ..." line.
- *   eop_file     : path to IERS finals2000A.all (xp, yp, dUT1, dX, dY).
- *   iau2006_dir  : path to the directory containing tab5.2{a,b,d}.txt
- *                  (IAU 2006 X / Y / s+XY/2 series).
+ *   n_inputs          : number of SP3 paths (>= 1).
+ *   input_sp3_paths   : array of length n_inputs, paths to IGS SP3
+ *                       files in chronological order.
+ *   output_bin        : path for the SPDYOUT_ binary to be written.
+ *   sat_id            : 3-character SP3 satellite identifier, e.g.
+ *                       "G11" for GPS PRN 11, "E03" for Galileo E03,
+ *                       "R23" for GLONASS slot 23. Case-sensitive,
+ *                       matched to the first 3 chars of every
+ *                       "P<id> x y z ..." line.
+ *   eop_file          : path to IERS finals2000A.all.
+ *   iau2006_dir       : path to the directory containing
+ *                       tab5.2{a,b,d}.txt.
  *
- * Side effects: informational lines printed to stderr (satellite id,
- * number of epochs read, time range, output record count).
+ * Side effects: per-file and aggregate informational summaries printed
+ * to stderr.
  */
-int spody_convert_sp3_to_state_icrf(const char *input_sp3,
+int spody_convert_sp3_to_state_icrf(int n_inputs,
+                                    const char *const *input_sp3_paths,
                                     const char *output_bin,
                                     const char *sat_id,
                                     const char *eop_file,
