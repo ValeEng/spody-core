@@ -111,6 +111,14 @@ extern "C" {
 
 #define EMRAT 0.813005682214972154E+02 //TBD from JPL DE440
 
+    // Primary-pair mean separations used by the CR3BP model.
+    // The standard CR3BP assumes a fixed circular orbit between the
+    // two primaries; L is the radius of that circle. Values are the
+    // canonical literature ones for Earth-Moon (sub-AU mean separation
+    // averaged over a synodic month). Sun-X pairs use AU2KM scaled by
+    // the planet's semi-major axis in AU and are added here as needed.
+#define EARTH_MOON_DISTANCE_KM 384400.0
+
 #ifdef __cplusplus
 }
 #endif

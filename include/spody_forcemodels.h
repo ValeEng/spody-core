@@ -186,6 +186,35 @@ struct ForceModelContext {
      * Use ET_FROM_JD(jd) from spody_const.h to convert from a JD epoch.
      * et0 = 0 corresponds to the J2000 epoch itself. */
     double  et0;
+
+    /* ---- CR3BP fields ----
+     * Used only when the RHS is `spody_force_rhs_cr3bp`. Zero (or
+     * uninitialised) in high-fidelity runs -- the HF RHS never reads
+     * them. State y in CR3BP runs is interpreted in the synodic
+     * rotating frame anchored on the barycenter of the two primaries;
+     * positions in km, velocities in km/s. The system is autonomous
+     * so `et0` is not consulted by the CR3BP RHS.
+     *
+     *   cr3bp_mu1, cr3bp_mu2 : gravitational parameters of the two
+     *                          primaries (km^3/s^2). Convention is
+     *                          cr3bp_mu1 >= cr3bp_mu2 (primary 1 is
+     *                          the bigger one), but the RHS is
+     *                          symmetric so the order is not enforced.
+     *   cr3bp_L              : primary-primary separation (km),
+     *                          assumed fixed.
+     *   cr3bp_omega, _x1, _x2: derived caches populated by
+     *                          spody_init_CR3BPContext from the three
+     *                          inputs above. Do not set them by hand.
+     *                          omega = sqrt((mu1+mu2)/L^3),
+     *                          x1 = -(mu2/(mu1+mu2)) * L,
+     *                          x2 = +(mu1/(mu1+mu2)) * L.
+     */
+    double cr3bp_mu1;
+    double cr3bp_mu2;
+    double cr3bp_L;
+    double cr3bp_omega;
+    double cr3bp_x1;
+    double cr3bp_x2;
 };
 
 /* ============================================================
@@ -252,6 +281,25 @@ void spody_force_drag(const Spacecraft *sat,
  * minimise round-off accumulation in long propagations.
  */
 int spody_force_rhs_default(double t, const double *y, double *dy, void *user);
+
+/* CR3BP RHS in the synodic rotating frame, dimensional units.
+ *
+ * Reads ONLY the cr3bp_* fields of the context (all HF fields may be
+ * NULL/zero). State layout: y = [r(3), v(3)] in km, km/s in the
+ * rotating frame whose +x axis points from the bigger primary toward
+ * the smaller one, +z aligned with the orbital angular momentum.
+ * Time `t` is irrelevant (autonomous system); `et0` is not consulted.
+ *
+ * Uses the pre-cached derived quantities (cr3bp_omega, cr3bp_x1,
+ * cr3bp_x2) populated by spody_init_CR3BPContext. Caller must have
+ * called that init once after filling cr3bp_mu1 / cr3bp_mu2 / cr3bp_L. */
+int spody_force_rhs_cr3bp(double t, const double *y, double *dy, void *user);
+
+/* Pre-compute the derived caches (omega, x1, x2) from cr3bp_mu1,
+ * cr3bp_mu2, cr3bp_L. Call once after filling the three input fields.
+ * Sets the derived caches to zero if any input is non-positive, so an
+ * uninitialised CR3BP slot in an HF run stays harmlessly zero. */
+void spody_init_CR3BPContext(ForceModelContext *ctx);
 
 /* ============================================================
  * Force breakdown (post-step diagnostic)

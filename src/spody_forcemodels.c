@@ -266,6 +266,76 @@ int spody_force_rhs_default(double t, const double *y, double *dy, void *user) {
 }
 
 /* ============================================================
+ * CR3BP context init + RHS
+ *
+ * Circular Restricted 3-Body Problem in the synodic rotating frame,
+ * dimensional units (km, km/s, rad/s). The two primaries are fixed
+ * on the x-axis at x1 = -(mu2/(mu1+mu2)) * L (bigger primary) and
+ * x2 = +(mu1/(mu1+mu2)) * L (smaller primary). The frame rotates
+ * with omega = sqrt((mu1+mu2)/L^3) about +z. Equations of motion:
+ *
+ *   ax = -mu1 (x-x1)/r1^3 - mu2 (x-x2)/r2^3 + omega^2 * x + 2*omega*vy
+ *   ay = -mu1  y    /r1^3 - mu2  y    /r2^3 + omega^2 * y - 2*omega*vx
+ *   az = -mu1  z    /r1^3 - mu2  z    /r2^3
+ *
+ * Time is autonomous (t and et0 are not consulted). The RHS reads only
+ * the cr3bp_* fields; HF fields may be NULL/zero.
+ * ============================================================ */
+void spody_init_CR3BPContext(ForceModelContext *ctx) {
+    if (!ctx) return;
+    double mu1 = ctx->cr3bp_mu1;
+    double mu2 = ctx->cr3bp_mu2;
+    double L   = ctx->cr3bp_L;
+    if (mu1 <= 0.0 || mu2 <= 0.0 || L <= 0.0) {
+        ctx->cr3bp_omega = 0.0;
+        ctx->cr3bp_x1    = 0.0;
+        ctx->cr3bp_x2    = 0.0;
+        return;
+    }
+    double mu_tot = mu1 + mu2;
+    ctx->cr3bp_omega = sqrt(mu_tot / (L * L * L));
+    ctx->cr3bp_x1    = -(mu2 / mu_tot) * L;
+    ctx->cr3bp_x2    = +(mu1 / mu_tot) * L;
+}
+
+int spody_force_rhs_cr3bp(double t, const double *y, double *dy, void *user) {
+    (void)t;
+    ForceModelContext *ctx = (ForceModelContext*)user;
+
+    double mu1   = ctx->cr3bp_mu1;
+    double mu2   = ctx->cr3bp_mu2;
+    double omega = ctx->cr3bp_omega;
+    double x1    = ctx->cr3bp_x1;
+    double x2    = ctx->cr3bp_x2;
+
+    double rx = y[0], ry = y[1], rz = y[2];
+    double vx = y[3], vy = y[4];
+
+    /* relative to bigger primary at (x1, 0, 0) */
+    double dx1 = rx - x1;
+    double r1_sq = dx1*dx1 + ry*ry + rz*rz;
+    double inv_r1_3 = 1.0 / (r1_sq * sqrt(r1_sq));
+
+    /* relative to smaller primary at (x2, 0, 0) */
+    double dx2 = rx - x2;
+    double r2_sq = dx2*dx2 + ry*ry + rz*rz;
+    double inv_r2_3 = 1.0 / (r2_sq * sqrt(r2_sq));
+
+    double g1 = -mu1 * inv_r1_3;
+    double g2 = -mu2 * inv_r2_3;
+    double omega2 = omega * omega;
+
+    dy[0] = y[3];
+    dy[1] = y[4];
+    dy[2] = y[5];
+    dy[3] = g1 * dx1 + g2 * dx2 + omega2 * rx + 2.0 * omega * vy;
+    dy[4] = g1 * ry  + g2 * ry  + omega2 * ry - 2.0 * omega * vx;
+    dy[5] = g1 * rz  + g2 * rz;
+
+    return 0;
+}
+
+/* ============================================================
  * Diagnostic: force breakdown (post-step)
  *
  * Calls each spody_force_* exactly as spody_force_rhs_default does,
