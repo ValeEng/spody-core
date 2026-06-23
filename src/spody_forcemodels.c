@@ -298,6 +298,48 @@ void spody_init_CR3BPContext(ForceModelContext *ctx) {
     ctx->cr3bp_x2    = +(mu1 / mu_tot) * L;
 }
 
+void spody_inertial_to_cr3bp_synodic(
+        const double r_primary_inertial[3],
+        const double v_primary_inertial[3],
+        double mu1_km3_s2, double mu2_km3_s2, double L_km,
+        int    primary_index,
+        double r_synodic[3], double v_synodic[3]) {
+    double mu_tot = mu1_km3_s2 + mu2_km3_s2;
+    double omega  = sqrt(mu_tot / (L_km * L_km * L_km));
+    /* Primary positions on the synodic x-axis (matches the convention
+     * used by spody_init_CR3BPContext above): primary_1 at
+     * -mu2/mu_tot * L, primary_2 at +mu1/mu_tot * L. At t = 0 these
+     * also coincide with the underlying inertial x-axis. */
+    double x_primary = (primary_index == 2)
+                       ?  (mu1_km3_s2 / mu_tot) * L_km
+                       : -(mu2_km3_s2 / mu_tot) * L_km;
+
+    /* Step 1: primary-centered inertial -> barycenter-centered inertial.
+     * At t = 0 the primary sits at (x_primary, 0, 0) and moves
+     * tangentially with v = omega * x_primary along +y. */
+    double r_bary[3] = {
+        r_primary_inertial[0] + x_primary,
+        r_primary_inertial[1],
+        r_primary_inertial[2],
+    };
+    double v_bary[3] = {
+        v_primary_inertial[0],
+        v_primary_inertial[1] + omega * x_primary,
+        v_primary_inertial[2],
+    };
+
+    /* Step 2: barycenter-inertial -> synodic-rotating at t = 0.
+     * Rotation is identity; velocity loses omega x r (omega = (0,0,omega)).
+     * The sign of the omega-x-r terms below comes from
+     * v_rot = v_inert - omega x r, with omega x r = (-w*ry, +w*rx, 0). */
+    r_synodic[0] = r_bary[0];
+    r_synodic[1] = r_bary[1];
+    r_synodic[2] = r_bary[2];
+    v_synodic[0] = v_bary[0] + omega * r_synodic[1];
+    v_synodic[1] = v_bary[1] - omega * r_synodic[0];
+    v_synodic[2] = v_bary[2];
+}
+
 int spody_force_rhs_cr3bp(double t, const double *y, double *dy, void *user) {
     (void)t;
     ForceModelContext *ctx = (ForceModelContext*)user;

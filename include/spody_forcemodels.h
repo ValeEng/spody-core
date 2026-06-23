@@ -301,6 +301,30 @@ int spody_force_rhs_cr3bp(double t, const double *y, double *dy, void *user);
  * uninitialised CR3BP slot in an HF run stays harmlessly zero. */
 void spody_init_CR3BPContext(ForceModelContext *ctx);
 
+/* Transform a state expressed in one primary's local inertial frame
+ * (origin at the primary, axes non-rotating, primary treated as
+ * stationary) into the CR3BP synodic rotating frame at t = 0.
+ *
+ * At t = 0 the synodic axes coincide with the underlying inertial
+ * axes by convention, so the rotation reduces to identity and only
+ * a translation by the primary's synodic position plus the omega-x-r
+ * velocity correction need to be applied. This is the conversion the
+ * TOML input layer uses to seed the CR3BP integrator from a Keplerian
+ * initial condition referred to one of the primaries.
+ *
+ *   r_primary_inertial, v_primary_inertial : input state expressed in
+ *       the chosen primary's inertial frame (km, km/s)
+ *   mu1_km3_s2, mu2_km3_s2 : GM of primary_1 (bigger) and primary_2
+ *   L_km                   : primary-primary separation
+ *   primary_index          : 1 = primary_1, 2 = primary_2
+ *   r_synodic, v_synodic   : output state in synodic frame (km, km/s) */
+void spody_inertial_to_cr3bp_synodic(
+        const double r_primary_inertial[3],
+        const double v_primary_inertial[3],
+        double mu1_km3_s2, double mu2_km3_s2, double L_km,
+        int    primary_index,
+        double r_synodic[3], double v_synodic[3]);
+
 /* ============================================================
  * Force breakdown (post-step diagnostic)
  * ============================================================
