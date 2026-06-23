@@ -34,6 +34,24 @@ SpodyEvent spody_event_impact(int naif_id, double radius_km, spody_event_action 
     return ev;
 }
 
+SpodyEvent spody_event_impact_at_point(int naif_id, const double ref_point[3],
+                                        double radius_km, spody_event_action action) {
+    SpodyEvent ev;
+    memset(&ev, 0, sizeof(ev));
+    ev.kind          = SPODY_EVENT_KIND_IMPACT;
+    ev.action        = action;
+    ev.naif_id       = naif_id;
+    ev.radius_km     = radius_km;
+    ev.has_ref_point = 1;
+    if (ref_point) {
+        ev.ref_point[0] = ref_point[0];
+        ev.ref_point[1] = ref_point[1];
+        ev.ref_point[2] = ref_point[2];
+    }
+    ev.prev_valid = 0;
+    return ev;
+}
+
 SpodyEvent spody_event_eclipse(int occulter_naif_id, double occulter_radius_km,
                                double threshold_fraction, spody_event_action action) {
     SpodyEvent ev;
@@ -47,11 +65,21 @@ SpodyEvent spody_event_eclipse(int occulter_naif_id, double occulter_radius_km,
     return ev;
 }
 
-/* Compute |r_sat - r_body|^2 in the central-body inertial frame. */
+/* Compute |r_sat - r_body|^2 in the integrator's working frame. Three
+ * paths: (i) explicit fixed reference point set by the caller (CR3BP),
+ * (ii) body is the central body (HF: origin), (iii) body is some other
+ * body and its position comes from the ephemeris (HF: third bodies). */
 static double impact_distance2(const SpodyEvent *ev,
                                const ForceModelContext *ctx,
                                double t, const double *y)
 {
+    if (ev->has_ref_point) {
+        double dx = y[0] - ev->ref_point[0];
+        double dy = y[1] - ev->ref_point[1];
+        double dz = y[2] - ev->ref_point[2];
+        return dx*dx + dy*dy + dz*dz;
+    }
+
     if (ev->naif_id == ctx->naif_central) {
         /* satellite position is already in the central frame */
         return y[0]*y[0] + y[1]*y[1] + y[2]*y[2];

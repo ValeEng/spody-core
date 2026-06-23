@@ -108,6 +108,15 @@ typedef struct {
                                        ECLIPSE: occulter physical radius */
     double threshold_fraction;      /* ECLIPSE: fraction threshold in [0, 1] */
 
+    /* Optional explicit reference point for IMPACT, in the integrator's
+     * working frame. When `has_ref_point` is non-zero the impact check
+     * tests |y_xyz - ref_point| instead of falling back to the central
+     * body (origin) or an ephemeris query. Used by CR3BP where the two
+     * primaries sit at fixed synodic-frame positions and there is no
+     * ephemeris. Default 0 / {0,0,0} preserves the legacy HF behaviour. */
+    int    has_ref_point;
+    double ref_point[3];
+
     /* ---- runtime-set (output) ---- */
     int    triggered;               /* 1 if the predicate has ever fired        */
     double t_trigger;               /* sim time of the (last) trigger           */
@@ -126,6 +135,15 @@ typedef struct {
 
 /* Convenience constructor for an impact event. */
 SpodyEvent spody_event_impact(int naif_id, double radius_km, spody_event_action action);
+
+/* Constructor for an impact event with a fixed reference point in the
+ * integrator's working frame. The distance check is
+ *   |y_xyz - ref_point| < radius_km
+ * regardless of `ctx->naif_central` or the ephemeris (both of which may
+ * be absent, as in CR3BP). `naif_id` is carried purely for logging /
+ * downstream identification. */
+SpodyEvent spody_event_impact_at_point(int naif_id, const double ref_point[3],
+                                        double radius_km, spody_event_action action);
 
 /* Convenience constructor for an eclipse event.
  *
