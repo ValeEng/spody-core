@@ -20,6 +20,7 @@
 extern "C" {
 #endif
 
+#include "spody_atmosphere.h"
 #include "spody_const.h"
 #include "spody_eclipse.h"
 #include "spody_eop.h"
@@ -176,8 +177,29 @@ struct ForceModelContext {
     double  srp_occulter_radius;     /* km                           */
     double  sun_radius;              /* km                           */
 
-    /* atmospheric drag - placeholder, not yet implemented            */
-    int     enable_drag;
+    /* atmospheric drag.
+     *
+     * `enable_drag` is the runtime toggle (parsed from the TOML).
+     * `atmosphere` holds the density callback registered by the
+     * central body (NRLMSISE-00 for Earth, MCD for Mars when it
+     * ships, ...); a NULL pointer means the body has no atmosphere
+     * and `spody_force_drag` returns zero unconditionally. The
+     * space-weather handle is the per-thread query cache over the
+     * shared MappedSpaceWeatherData parsed by the app once at
+     * startup; NULL when drag is off or when the chosen model does
+     * not consume space weather.
+     *
+     * `body_spin_rad_s` is the central body's sidereal rotation rate
+     * about its body-fixed +Z axis (Earth: EARTH_ROT_RATE_RADPS).
+     * Used to derive omega x r for the air-relative velocity in the
+     * drag formula. Bodies without a rotation rate produce zero
+     * drag (the velocity relative to a stationary atmosphere is the
+     * inertial velocity itself, which is fine, but in practice the
+     * drag toggle should be off in that case). */
+    int                 enable_drag;
+    SpodyAtmosphere    *atmosphere;
+    MappedSpaceWeather *space_weather;
+    double              body_spin_rad_s;
 
     /* Time anchor: Ephemeris Time (seconds past J2000 TDB) at integrator
      * t = 0. The ephemeris query argument is simply
@@ -260,12 +282,22 @@ void spody_force_thirdbody_cowell(double mu_3, const double r_3[3],
 void spody_force_srp(const Spacecraft *sat, double fraction_sunlight,
                      const double r_sat_to_sun[3], double acc_out[3]);
 
-/* Atmospheric drag - PLACEHOLDER.
- * Currently writes acc_out = {0,0,0}. The real implementation will need
- * an atmospheric density model and the central body's rotation rate to
- * compute the air-relative velocity. The signature may change when the
- * model is wired in. */
-void spody_force_drag(const Spacecraft *sat,
+/* Atmospheric drag in ICRF (km/s^2).
+ *
+ *   a_drag = -0.5 * rho * |v_rel|^2 * Cd * (A/m) * v_rel_hat
+ *   v_rel  = v_sat - omega_central_icrf x r_sat
+ *
+ * Queries `ctx->atmosphere->density(...)` for rho at the satellite
+ * position (mapped from ICRF to body-fixed via `ctx->get_bf_rotation`
+ * so the density model sees coordinates in its native frame), and
+ * builds omega_central_icrf as `body_spin_rad_s * (R_bf_to_icrf @
+ * +z_bf)`.
+ *
+ * Returns acc_out = {0,0,0} when ANY of (ctx->sat, ctx->atmosphere,
+ * ctx->get_bf_rotation, ctx->body_spin_rad_s > 0) is missing, or
+ * when the density callback fails -- so the call site can wire it
+ * unconditionally under the drag toggle. */
+void spody_force_drag(const ForceModelContext *ctx, double et,
                       const double r_sat[3], const double v_sat[3],
                       double acc_out[3]);
 

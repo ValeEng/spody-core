@@ -148,17 +148,62 @@ void spody_force_srp(const Spacecraft *sat, double fraction_sunlight,
 }
 
 /* ============================================================
- * Atomic force: atmospheric drag - PLACEHOLDER
- * ============================================================ */
-void spody_force_drag(const Spacecraft *sat,
+ * Atomic force: atmospheric drag
+ * ============================================================
+ *   a_drag = -0.5 * rho * |v_rel|^2 * Cd * (A/m) * v_rel_hat
+ *
+ * Density comes from the central body's atmosphere callback
+ * (`ctx->atmosphere->density`); air-relative velocity uses the
+ * body's BF +Z axis rotated into ICRF as the rotation-axis
+ * direction, scaled by `ctx->body_spin_rad_s`. Wrappers convert
+ * spacecraft am_drag from m^2/kg + density from kg/m^3 + velocity
+ * km/s into the km/s^2 the integrator expects (the trailing /KM2M
+ * is the m^2 -> km^2 contraction of A/m times the km^2 -> m^2
+ * expansion of |v|^2 -- net 1/KM2M factor).
+ */
+void spody_force_drag(const ForceModelContext *ctx, double et,
                       const double r_sat[3], const double v_sat[3],
                       double acc[3]) {
-    (void)sat; (void)r_sat; (void)v_sat;
-    /* TBD: needs atmospheric density model + central-body rotation rate
-     * to compute air-relative velocity. Returns zero for now. */
-    acc[0] = 0.0;
-    acc[1] = 0.0;
-    acc[2] = 0.0;
+    acc[0] = 0.0; acc[1] = 0.0; acc[2] = 0.0;
+    if (!ctx || !ctx->sat || !ctx->atmosphere || !ctx->atmosphere->density
+            || !ctx->get_bf_rotation || ctx->body_spin_rad_s <= 0.0) {
+        return;
+    }
+    double R_icrf_to_bf[3][3], R_bf_to_icrf[3][3];
+    ctx->get_bf_rotation(ctx, et, R_icrf_to_bf, R_bf_to_icrf);
+
+    double r_bf[3];
+    r_bf[0] = R_icrf_to_bf[0][0]*r_sat[0] + R_icrf_to_bf[0][1]*r_sat[1] + R_icrf_to_bf[0][2]*r_sat[2];
+    r_bf[1] = R_icrf_to_bf[1][0]*r_sat[0] + R_icrf_to_bf[1][1]*r_sat[1] + R_icrf_to_bf[1][2]*r_sat[2];
+    r_bf[2] = R_icrf_to_bf[2][0]*r_sat[0] + R_icrf_to_bf[2][1]*r_sat[1] + R_icrf_to_bf[2][2]*r_sat[2];
+
+    double rho_kg_m3 = 0.0;
+    if (ctx->atmosphere->density(ctx, et, r_bf, &rho_kg_m3) != 0) return;
+    if (!(rho_kg_m3 > 0.0)) return;
+
+    /* omega vector in ICRF = body's BF +Z rotated into ICRF, scaled. */
+    double omega[3];
+    omega[0] = ctx->body_spin_rad_s * R_bf_to_icrf[0][2];
+    omega[1] = ctx->body_spin_rad_s * R_bf_to_icrf[1][2];
+    omega[2] = ctx->body_spin_rad_s * R_bf_to_icrf[2][2];
+
+    double v_rel[3];
+    v_rel[0] = v_sat[0] - (omega[1]*r_sat[2] - omega[2]*r_sat[1]);
+    v_rel[1] = v_sat[1] - (omega[2]*r_sat[0] - omega[0]*r_sat[2]);
+    v_rel[2] = v_sat[2] - (omega[0]*r_sat[1] - omega[1]*r_sat[0]);
+
+    double v_rel_mag2 = v_rel[0]*v_rel[0] + v_rel[1]*v_rel[1] + v_rel[2]*v_rel[2];
+    double v_rel_mag  = sqrt(v_rel_mag2);
+    if (!(v_rel_mag > 0.0)) return;
+
+    /* Mixed units: rho [kg/m^3], am_drag [m^2/kg], v [km/s].
+     * 0.5 * rho * v_m^2 * (A/m) gives a [m/s^2]; convert to km/s^2
+     * via M2KM. Equivalently 0.5 * rho * v_km^2 * KM2M^2 * (A/m) *
+     * M2KM = 0.5 * rho * v_km^2 * KM2M * (A/m). */
+    double f = -0.5 * rho_kg_m3 * v_rel_mag * ctx->sat->Cd * ctx->sat->am_drag * KM2M;
+    acc[0] = f * v_rel[0];
+    acc[1] = f * v_rel[1];
+    acc[2] = f * v_rel[2];
 }
 
 /* ============================================================
@@ -222,9 +267,9 @@ int spody_force_rhs_default(double t, const double *y, double *dy, void *user) {
         acc_pert[2] += acc_tmp[2];
     }
 
-    /* ---- 2. drag (placeholder) -------------------------------- */
+    /* ---- 2. drag ---------------------------------------------- */
     if (ctx->enable_drag) {
-        spody_force_drag(ctx->sat, r, v, acc_tmp);
+        spody_force_drag(ctx, et, r, v, acc_tmp);
         acc_pert[0] += acc_tmp[0];
         acc_pert[1] += acc_tmp[1];
         acc_pert[2] += acc_tmp[2];
@@ -462,9 +507,9 @@ void spody_force_breakdown(const ForceModelContext *ctx,
         spody_force_srp(ctx->sat, fraction, r_sat_to_sun, bd->acc_srp);
     }
 
-    /* drag (placeholder; writes zero today) */
+    /* drag */
     if (ctx->enable_drag) {
-        spody_force_drag(ctx->sat, r, v, bd->acc_drag);
+        spody_force_drag(ctx, et, r, v, bd->acc_drag);
     }
 
     /* total: same sum order as rhs_default
