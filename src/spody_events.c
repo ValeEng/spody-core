@@ -30,6 +30,7 @@ SpodyEvent spody_event_impact(int naif_id, double radius_km, spody_event_action 
     ev.action     = action;
     ev.naif_id    = naif_id;
     ev.radius_km  = radius_km;
+    ev.refined    = 1;
     ev.prev_valid = 0;
     return ev;
 }
@@ -42,6 +43,7 @@ SpodyEvent spody_event_impact_at_point(int naif_id, const double ref_point[3],
     ev.action        = action;
     ev.naif_id       = naif_id;
     ev.radius_km     = radius_km;
+    ev.refined       = 1;
     ev.has_ref_point = 1;
     if (ref_point) {
         ev.ref_point[0] = ref_point[0];
@@ -61,7 +63,46 @@ SpodyEvent spody_event_eclipse(int occulter_naif_id, double occulter_radius_km,
     ev.naif_id            = occulter_naif_id;
     ev.radius_km          = occulter_radius_km;
     ev.threshold_fraction = threshold_fraction;
+    ev.refined            = 1;
     ev.prev_valid         = 0;
+    return ev;
+}
+
+SpodyEvent spody_event_altitude_crossing(int naif_id, double body_radius_km,
+                                          double altitude_km,
+                                          spody_event_action action) {
+    SpodyEvent ev;
+    memset(&ev, 0, sizeof(ev));
+    ev.kind         = SPODY_EVENT_KIND_ALT_CROSSING;
+    ev.action       = action;
+    ev.naif_id      = naif_id;
+    ev.radius_km    = body_radius_km;
+    ev.altitude_km  = altitude_km;
+    ev.refined      = 1;
+    ev.prev_valid   = 0;
+    return ev;
+}
+
+SpodyEvent spody_event_altitude_crossing_at_point(int naif_id,
+                                                   const double ref_point[3],
+                                                   double body_radius_km,
+                                                   double altitude_km,
+                                                   spody_event_action action) {
+    SpodyEvent ev;
+    memset(&ev, 0, sizeof(ev));
+    ev.kind          = SPODY_EVENT_KIND_ALT_CROSSING;
+    ev.action        = action;
+    ev.naif_id       = naif_id;
+    ev.radius_km     = body_radius_km;
+    ev.altitude_km   = altitude_km;
+    ev.refined       = 1;
+    ev.has_ref_point = 1;
+    if (ref_point) {
+        ev.ref_point[0] = ref_point[0];
+        ev.ref_point[1] = ref_point[1];
+        ev.ref_point[2] = ref_point[2];
+    }
+    ev.prev_valid = 0;
     return ev;
 }
 
@@ -69,7 +110,7 @@ SpodyEvent spody_event_eclipse(int occulter_naif_id, double occulter_radius_km,
  * paths: (i) explicit fixed reference point set by the caller (CR3BP),
  * (ii) body is the central body (HF: origin), (iii) body is some other
  * body and its position comes from the ephemeris (HF: third bodies). */
-static double impact_distance2(const SpodyEvent *ev,
+static double body_distance2(const SpodyEvent *ev,
                                const ForceModelContext *ctx,
                                double t, const double *y)
 {
@@ -144,7 +185,7 @@ int spody_event_check(SpodyEvent *ev,
              * first fire (caller has already consumed them). */
             if (ev->triggered) break;
 
-            double d2 = impact_distance2(ev, ctx, t, y);
+            double d2 = body_distance2(ev, ctx, t, y);
             if (d2 >= ev->radius_km * ev->radius_km) break;
 
             ev->triggered = 1;
@@ -153,13 +194,15 @@ int spody_event_check(SpodyEvent *ev,
             ev->distance_at_trigger = sqrt(d2);
             return 1;
         }
-        case SPODY_EVENT_KIND_ECLIPSE: {
-            /* ECLIPSE is recurring -- correctly detecting transitions
-             * requires sign tracking across two accepted steps, which
-             * the refined path implements. The coarse path cannot
-             * disambiguate "in shadow now" from "just entered shadow",
-             * so it does not fire. Use spody_event_check_refined with
-             * a SPODY_INTEG_RK45 integrator instead. */
+        case SPODY_EVENT_KIND_ECLIPSE:
+        case SPODY_EVENT_KIND_ALT_CROSSING: {
+            /* Recurring kinds: correctly detecting transitions requires
+             * sign tracking across two accepted steps, which only the
+             * refined path implements. The coarse path cannot
+             * disambiguate "currently inside the predicate" from "just
+             * crossed it", so it does not fire. Use
+             * spody_event_check_refined with a SPODY_INTEG_RK45
+             * integrator instead. */
             break;
         }
         default:
@@ -192,7 +235,7 @@ static double impact_residual(double theta, void *args) {
     double t_theta = c->integ->t_old + theta * c->integ->h_old;
 
     /* distance to the body at that state */
-    double d2 = impact_distance2(c->ev, c->ctx, t_theta, c->y_buf);
+    double d2 = body_distance2(c->ev, c->ctx, t_theta, c->y_buf);
     return sqrt(d2) - c->ev->radius_km;
 }
 
@@ -202,6 +245,14 @@ static double eclipse_residual(double theta, void *args) {
     double t_theta = c->integ->t_old + theta * c->integ->h_old;
     double frac    = eclipse_fraction(c->ev, c->ctx, t_theta, c->y_buf);
     return frac - c->ev->threshold_fraction;
+}
+
+static double alt_crossing_residual(double theta, void *args) {
+    EventClosure *c = (EventClosure*)args;
+    spody_dense_eval(c->integ, theta, c->y_buf);
+    double t_theta = c->integ->t_old + theta * c->integ->h_old;
+    double d2 = body_distance2(c->ev, c->ctx, t_theta, c->y_buf);
+    return sqrt(d2) - c->ev->radius_km - c->ev->altitude_km;
 }
 
 int spody_event_check_refined(SpodyEvent *ev,
@@ -226,9 +277,9 @@ int spody_event_check_refined(SpodyEvent *ev,
              * step. On the very first call (no cache yet) f_start is
              * computed from integ->y_old; on subsequent calls it comes
              * from the value cached on the previous call. */
-            double f_end   = sqrt(impact_distance2(ev, ctx, integ->t, integ->y)) - ev->radius_km;
+            double f_end   = sqrt(body_distance2(ev, ctx, integ->t, integ->y)) - ev->radius_km;
             double f_start = ev->prev_valid ? ev->prev_distance_signed
-                : (sqrt(impact_distance2(ev, ctx, integ->t_old, integ->y_old)) - ev->radius_km);
+                : (sqrt(body_distance2(ev, ctx, integ->t_old, integ->y_old)) - ev->radius_km);
             ev->prev_distance_signed = f_end;
             ev->prev_valid = 1;
 
@@ -236,7 +287,7 @@ int spody_event_check_refined(SpodyEvent *ev,
             if ((f_start > 0.0) == (f_end > 0.0)) break;
 
             /* Bracket Brent on theta in [0, 1] using the closure that
-             * evaluates Hermite + impact_distance2 at each probe. */
+             * evaluates Hermite + body_distance2 at each probe. */
             EventClosure cl;
             cl.ev    = ev;
             cl.ctx   = ctx;
@@ -262,7 +313,7 @@ int spody_event_check_refined(SpodyEvent *ev,
              * matches t_trigger. */
             spody_dense_eval(integ, theta_root, cl.y_buf);
             double t_trigger = integ->t_old + theta_root * integ->h_old;
-            double d2_trig   = impact_distance2(ev, ctx, t_trigger, cl.y_buf);
+            double d2_trig   = body_distance2(ev, ctx, t_trigger, cl.y_buf);
 
             ev->triggered = 1;
             ev->t_trigger = t_trigger;
@@ -312,6 +363,56 @@ int spody_event_check_refined(SpodyEvent *ev,
             ev->t_trigger = t_trigger;
             for (int i = 0; i < 6; i++) ev->y_trigger[i] = cl.y_buf[i];
             ev->distance_at_trigger = frac_trig;   /* semantic reuse: fraction in [0,1] */
+            return 1;
+        }
+        case SPODY_EVENT_KIND_ALT_CROSSING: {
+            /* ALT_CROSSING is recurring: NO latch on ev->triggered.
+             * Every sign change of (|r_sat - r_body| - body_radius -
+             * altitude) fires, so both ascending and descending
+             * crossings are logged. The caller is expected to consume
+             * the output fields before the next call overwrites them.
+             *
+             * `ev->refined == 0` opts out of the Brent root finding:
+             * we still do sign tracking but skip the localisation,
+             * firing at the END of the accepted step (precision =
+             * step size). The toggle is essentially free in steady
+             * state -- Brent runs only at the actual crossing step --
+             * but it's exposed for users with many altitude bands. */
+            double threshold = ev->radius_km + ev->altitude_km;
+            double f_end   = sqrt(body_distance2(ev, ctx, integ->t, integ->y))
+                             - threshold;
+            double f_start = ev->prev_valid ? ev->prev_distance_signed
+                : (sqrt(body_distance2(ev, ctx, integ->t_old, integ->y_old))
+                   - threshold);
+            ev->prev_distance_signed = f_end;
+            ev->prev_valid = 1;
+
+            /* No sign change -> altitude not crossed in [t_old, t]. */
+            if ((f_start > 0.0) == (f_end > 0.0)) break;
+
+            double theta_root = 1.0;
+            EventClosure cl;
+            cl.ev    = ev;
+            cl.ctx   = ctx;
+            cl.integ = integ;
+            if (ev->refined) {
+                int rc = spody_solver_brent(alt_crossing_residual, &cl,
+                                             /*x_lo=*/0.0, /*x_hi=*/1.0,
+                                             /*f_lo=*/f_start, /*f_hi=*/f_end,
+                                             /*use_provided=*/1,
+                                             /*tol=*/1e-12, /*max_iter=*/60,
+                                             &theta_root);
+                if (rc != SPODY_SOLVER_OK) theta_root = 1.0;
+            }
+
+            spody_dense_eval(integ, theta_root, cl.y_buf);
+            double t_trigger = integ->t_old + theta_root * integ->h_old;
+            double d2_trig   = body_distance2(ev, ctx, t_trigger, cl.y_buf);
+
+            ev->triggered = 1;
+            ev->t_trigger = t_trigger;
+            for (int i = 0; i < 6; i++) ev->y_trigger[i] = cl.y_buf[i];
+            ev->distance_at_trigger = sqrt(d2_trig);
             return 1;
         }
         default:
