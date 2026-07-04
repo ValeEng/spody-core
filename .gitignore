@@ -79,3 +79,6 @@ build-gcc/
 
 raw_data/GRGM1200B/gggrx_1200b_sha.lbl
 raw_data/GRGM1200B/gggrx_1200b_sha.tab
+
+# Claude operating notes: local-only (machine-specific paths).
+CLAUDE.md
