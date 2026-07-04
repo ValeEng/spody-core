@@ -503,7 +503,9 @@ int spody_createfile_MappedEphemerisData(const char *path, const char **file_nam
     ep.reserved          = 0;
     ep.start_epoch       = ET_FROM_JD(ep.start_epoch);
     ep.end_epoch         = ET_FROM_JD(ep.end_epoch);
-    ep.seconds_per_record = ep.seconds_per_record * SECONDSxDAY;
+    /* days -> s. Explicit cast: the field is int and SECONDSxDAY is a
+     * double; the product is an exactly-representable integer. */
+    ep.seconds_per_record = (int)(ep.seconds_per_record * SECONDSxDAY);
 
     /* first write header info */
     fwrite(&ep, sizeof(EphemerisFile_Header), 1, fp_bin);
