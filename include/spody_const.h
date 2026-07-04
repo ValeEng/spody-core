@@ -22,8 +22,8 @@ extern "C" {
 
 
     // Constants
-#define JD_JAN_2000 2451545.0 // Julian Date at J2000 epoch (alias: JD_J2000)
-#define JD_J2000    2451545.0 // explicit name for the SPICE-style ET origin
+#define JD_J2000     2451545.0 // Julian Date at the J2000 epoch (SPICE-style ET origin)
+#define JD_MJD_EPOCH 2400000.5 // JD of MJD 0 (1858-11-17 00:00): MJD = JD - JD_MJD_EPOCH
 #define PI 3.14159265358979323846264338327950288419716939937511
 #define SOLAR_LUMINOSITY_4PIC 1.016111489628894e+08 // Watts divided 4pi*c*10^9 | we can use r in km and am in m^2/kg
 
@@ -38,17 +38,17 @@ extern "C" {
 
 
     //Radiation pressure coefficients (from Montenbruck and Gill)
-#define CR_ALUMINUM_COATED_MYLAR 1.88 
+#define CR_ALUMINUM_COATED_MYLAR 1.88
 #define CR_SOLARPANEL 1.21
-#define CR_ALUMNINUM 1.31
+#define CR_ALUMINUM 1.31
 
 
     // Conversion units
-#define SECONDSxDAY 86400
+#define SECONDSxDAY 86400.0
 #define KM2M 1000.0
 #define M2KM 0.001
 #define M2AU 6.684587122268445e-12
-#define AU2M 149597870700
+#define AU2M 149597870700.0
 #define KM2AU 6.684587122268445e-9
 #define AU2KM 149597870.7
 #define DEG2RAD (PI/180.0)
@@ -70,10 +70,16 @@ extern "C" {
     // GNSS time-scale offsets. GPS time is locked to TAI - 19 s
     // exactly since 1980-01-06, so the bridge to TT (= TAI + 32.184)
     // is a single constant -- no leap-second table required. GLONASS
-    // broadcast TOC is UTC and still needs the (TAI - UTC) leap chain
-    // (37 s post-2017).
+    // broadcast TOC is UTC and needs the (TAI - UTC) leap chain,
+    // hosted by spody_time.c (spody_tai_minus_utc).
 #define GPST2TT_SEC      51.184          // TT - GPST (= 19 + 32.184)
 #define TT2TAI_SEC       (-32.184)       // TAI - TT (exact)
+
+    // GPS week structure. Week 0 starts 1980-01-06 00:00:00 GPST;
+    // the half-week drives the week-rollover correction on tk.
+#define GPS_WEEK_SEC        604800.0
+#define HALF_GPS_WEEK_SEC   302400.0
+#define GPS_EPOCH_JD_GPST   2444244.5    // 1980-01-06 00:00 GPST
 
     // Earth rotation rate. IERS Conventions 2010 sec. 1.4 nominal
     // sidereal value; identical to WGS-84 / GLONASS-ICD / GPS-ICD
@@ -83,31 +89,35 @@ extern "C" {
 #define EARTH_ROT_RATE_RADPS 7.2921151467e-5
 
 
-    //gravitational parameters KM^3/s^2
-#define EARTH_MU 398600.4415 //398600.435507 //KM -->//(GRAV_CONST * EARTH_MASS) // m^3 s^-2
-#define MOON_MU 4902.8005821478 //4902.798815861232 // 4902.800118 KM -->// (GRAV_CONST * MOON_MASS) // SUN_MU / ( 328900.56 * ( 1.0 + 81.30059 ) ) m^3 s^-2
-#define SUN_MU  132712440017.99 //1.32712440018e11 //KM -->//(GRAV_CONST * SUN_MASS) // m^3 s^-2
-#define MARS_MU 42828.314258067 //42828.31425807143 // 42828.375214 KM -->//(GRAV_CONST * MARS_MASS) // SUN_MU / 3098708.0 m^3 s^-2
-#define MERCURY_MU 22032.080486418 //22032.08048642008//22032.080486196 KM -->//(GRAV_CONST * MERCURY_MASS) // SUN_MU / 6023600.0 m^3 s^-2
-#define VENUS_MU 324858.59882646 //324858.5988264916//324858.592 KM -->//(GRAV_CONST * VENUS_MASS) // SUN_MU / 408523.71 m^3 s^-2
-#define JUPITER_MU 126712767.85780 //1.267127678578078e8//1.26686534e8 KM -->//(GRAV_CONST * JUPITER_MASS) // SUN_MU / 1047.3486 m^3 s^-2
-#define SATURN_MU 37940626.061137
-#define URANUS_MU 5794549.0070719
+    // Gravitational parameters GM [km^3/s^2].
+    // Alternative published values (DE440 headers, IAU 2015 nominal)
+    // differ in the last digits; the ones below are the values the
+    // engine has always integrated with. Do not swap without
+    // re-running the validation suite against SPICE.
+#define EARTH_MU   398600.4415        // alt: 398600.435507 (DE440)
+#define MOON_MU    4902.8005821478    // alt: 4902.798815861232 (DE440)
+#define SUN_MU     132712440017.99    // alt: 1.32712440018e11
+#define MARS_MU    42828.314258067    // alt: 42828.375214 (system GM)
+#define MERCURY_MU 22032.080486418
+#define VENUS_MU   324858.59882646
+#define JUPITER_MU 126712767.85780    // alt: 1.26686534e8 (planet-only GM)
+#define SATURN_MU  37940626.061137
+#define URANUS_MU  5794549.0070719
 #define NEPTUNE_MU 6836534.0638793
-#define PLUTO_MU 981.60088770700
+#define PLUTO_MU   981.60088770700
 
-    //radii [km] (from pck00011, there is some additional iformation)
-#define MOON_RADIUS 1737.4 //from SPICE | OLD 1.7374e6 // m
-#define EARTH_RADIUS 6378.1366 //from SPICE | OLD 6.371e6 // m
-#define SUN_RADIUS 695700 //from SPICE | OLD 6.9634e8 // m 
-#define MARS_RADIUS 3376.20
+    // Mean radii [km] from SPICE pck00011.
+#define MOON_RADIUS    1737.4
+#define EARTH_RADIUS   6378.1366
+#define SUN_RADIUS     695700.0
+#define MARS_RADIUS    3376.20
 #define MERCURY_RADIUS 2440.53
-#define VENUS_RADIUS 6051.8
-#define JUPITER_RADIUS 71492
-#define SATURN_RADIUS 60268
-#define URANUS_RADIUS 25559
-#define NEPTUNE_RADIUS 24764
-#define PLUTO_RADIUS 1195
+#define VENUS_RADIUS   6051.8
+#define JUPITER_RADIUS 71492.0
+#define SATURN_RADIUS  60268.0
+#define URANUS_RADIUS  25559.0
+#define NEPTUNE_RADIUS 24764.0
+#define PLUTO_RADIUS   1195.0
 
 #define EMRAT 0.813005682214972154E+02 //TBD from JPL DE440
 

@@ -37,10 +37,8 @@
  * between observed and predicted rows.
  *
  * Time scale: queries take ET (s past J2000 TDB); converted to UTC
- * MJD using the same leap-second chain as spody_eop.c. The two
- * modules share the leap table by definition (UTC is UTC) but each
- * carries its own copy to keep the static table file-local; if a new
- * leap second is announced, both files need updating.
+ * MJD via spody_et_to_mjd_utc (spody_time.c), which owns the single
+ * C-side leap-second table.
  */
 #include "spody_atmosphere.h"
 
@@ -52,44 +50,7 @@
 #include <string.h>
 
 #include "spody_const.h"
-
-/* ----------------------------------------------------------------------
- * Leap-second table -- mirror of spody_eop.c's table. Keep them in
- * sync when IERS Bulletin C announces a new insertion.
- * ---------------------------------------------------------------------- */
-typedef struct { double mjd_utc; double tai_minus_utc; } LeapEntry;
-
-static const LeapEntry _leap_table[] = {
-    { 41317.0, 10.0 }, { 41499.0, 11.0 }, { 41683.0, 12.0 },
-    { 42048.0, 13.0 }, { 42413.0, 14.0 }, { 42778.0, 15.0 },
-    { 43144.0, 16.0 }, { 43509.0, 17.0 }, { 43874.0, 18.0 },
-    { 44239.0, 19.0 }, { 44786.0, 20.0 }, { 45151.0, 21.0 },
-    { 45516.0, 22.0 }, { 46247.0, 23.0 }, { 47161.0, 24.0 },
-    { 47892.0, 25.0 }, { 48257.0, 26.0 }, { 48804.0, 27.0 },
-    { 49169.0, 28.0 }, { 49534.0, 29.0 }, { 50083.0, 30.0 },
-    { 50630.0, 31.0 }, { 51179.0, 32.0 }, { 53736.0, 33.0 },
-    { 54832.0, 34.0 }, { 56109.0, 35.0 }, { 57204.0, 36.0 },
-    { 57754.0, 37.0 },
-};
-static const size_t _leap_table_n = sizeof _leap_table / sizeof _leap_table[0];
-
-static double _tai_minus_utc(double mjd_utc) {
-    if (mjd_utc < _leap_table[0].mjd_utc) return _leap_table[0].tai_minus_utc;
-    for (size_t i = _leap_table_n; i-- > 0; ) {
-        if (mjd_utc >= _leap_table[i].mjd_utc) return _leap_table[i].tai_minus_utc;
-    }
-    return _leap_table[0].tai_minus_utc;
-}
-
-static double _et_to_mjd_utc(double et) {
-    double mjd_tt  = (et / SECONDSxDAY) + (JD_J2000 - 2400000.5);
-    double mjd_tai = mjd_tt - 32.184 / SECONDSxDAY;
-    double leap = _tai_minus_utc(mjd_tai);
-    double mjd_utc = mjd_tai - leap / SECONDSxDAY;
-    leap = _tai_minus_utc(mjd_utc);
-    mjd_utc = mjd_tai - leap / SECONDSxDAY;
-    return mjd_utc;
-}
+#include "spody_time.h"
 
 /* Gregorian YYYY-MM-DD -> MJD (UTC midnight). Fliegel-Van Flandern
  * formula via Julian Day Number; valid for dates >= 1858-11-17
@@ -287,7 +248,7 @@ int spody_interpolate_space_weather(MappedSpaceWeather *map, double et,
     const MappedSpaceWeatherData *msw = map->msw;
     if (msw->n_records == 0) return -1;
 
-    double mjd = _et_to_mjd_utc(et);
+    double mjd = spody_et_to_mjd_utc(et);
     if (mjd < msw->mjd_first || mjd > msw->mjd_last_predicted) return -1;
 
     /* Use the per-thread cache first: the integrator typically queries

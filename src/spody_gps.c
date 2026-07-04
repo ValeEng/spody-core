@@ -61,6 +61,8 @@
 #include "spody_earth_orientation.h"
 #include "spody_forcemodels.h"
 #include "spody_const.h"
+#include "spody_math.h"
+#include "spody_time.h"
 
 #define SPODY_GPS_OUT_MAGIC          "SPDYOUT_"
 #define SPODY_GPS_OUT_VERSION        1u
@@ -70,20 +72,9 @@
  * any RINEX 3.x version with comfortable slack. */
 #define SPODY_RINEX_LINE             256
 
-#define SPODY_JD_J2000_TT            2451545.0
-
-/* Half-week in seconds, for GPS-week-rollover correction on tk. */
-#define SPODY_HALF_GPS_WEEK_SEC      302400.0
-#define SPODY_GPS_WEEK_SEC           604800.0
-
 /* EARTH_MU is in km^3/s^2; convert to m^3/s^2 for the broadcast
  * algorithm which works in metres. */
 #define SPODY_EARTH_MU_M3S2          (EARTH_MU * 1.0e9)
-
-/* GPS week 0 starts 1980-01-06 00:00:00 GPST. We need this when
- * converting the per-record TOC (Gregorian) to a GPS seconds-of-
- * week for the Toe wrap check. */
-#define SPODY_GPS_EPOCH_JD_GPST      2444244.5  /* 1980-01-06 00:00 */
 
 /* Fortran-D exponent normaliser for sscanf. RINEX 3 emits 1.23D-04;
  * MSVC's strtod rejects D, so we re-parse via E. Re-used for any line
@@ -112,25 +103,6 @@ static int _reparse_d_line(const char *line, double *a, double *b,
         buf[i] = (line[i] == 'D' || line[i] == 'd') ? 'E' : line[i];
     buf[i] = '\0';
     return sscanf(buf, "%lf %lf %lf %lf", a, b, c, d) == 4;
-}
-
-/* Meeus Gregorian -> JD. Returns JD at midnight + day fraction. */
-static double _greg_to_jd(int y, int m, int d, int hh, int mn, double ss) {
-    if (m <= 2) { y -= 1; m += 12; }
-    int A = y / 100;
-    int B = 2 - A + (A / 4);
-    double jd_midnight = floor(365.25 * (double)(y + 4716))
-                        + floor(30.6001 * (double)(m + 1))
-                        + (double)d + (double)B - 1524.5;
-    double day_frac = ((double)hh * 3600.0 + (double)mn * 60.0 + ss) / 86400.0;
-    return jd_midnight + day_frac;
-}
-
-/* 3x3 matrix-vector multiply (out = R . v). */
-static void _rot3_apply(const double R[3][3], const double v[3], double out[3]) {
-    out[0] = R[0][0]*v[0] + R[0][1]*v[1] + R[0][2]*v[2];
-    out[1] = R[1][0]*v[0] + R[1][1]*v[1] + R[1][2]*v[2];
-    out[2] = R[2][0]*v[0] + R[2][1]*v[1] + R[2][2]*v[2];
 }
 
 /* SPDYOUT_ 24-byte preamble identical to sim_run.c's writer. */
@@ -196,8 +168,8 @@ static void _gps_brdc_propagate(const _GpsEphemeris *eph,
 
     /* Time from Toe, with GPS-week-rollover correction. */
     double tk = t_sec_of_week - eph->toe;
-    if (tk >  SPODY_HALF_GPS_WEEK_SEC) tk -= SPODY_GPS_WEEK_SEC;
-    if (tk < -SPODY_HALF_GPS_WEEK_SEC) tk += SPODY_GPS_WEEK_SEC;
+    if (tk >  HALF_GPS_WEEK_SEC) tk -= GPS_WEEK_SEC;
+    if (tk < -HALF_GPS_WEEK_SEC) tk += GPS_WEEK_SEC;
 
     double M = eph->M0 + n * tk;
     double E = _kepler_solve(M, eph->e);
@@ -324,9 +296,9 @@ static double _gpst_seconds_of_week(int y, int m, int d, int hh, int mn,
                                      double ss) {
     /* Day-of-week: Sunday = 0, Saturday = 6. JD has Monday = 0, so
      * we shift by 1.5 days (12 h to JD-midnight + Sunday offset). */
-    double jd = _greg_to_jd(y, m, d, 0, 0, 0.0);
+    double jd = spody_greg_to_jd(y, m, d, 0, 0, 0.0);
     int    dow = ((int)floor(jd + 1.5)) % 7;
-    return (double)dow * 86400.0
+    return (double)dow * SECONDSxDAY
          + (double)hh  * 3600.0
          + (double)mn  *   60.0
          + ss;
@@ -420,9 +392,9 @@ static int _gps_scan_file(FILE *fin,
 
         /* GPST -> TT -> ET (TDB) bridge. RINEX TOC is GPST per
          * RINEX 3.05 sect. 6.10.1, and TT = GPST + 51.184 exactly. */
-        double jd_gpst = _greg_to_jd(y, mo, d, h, mi, sec);
-        double jd_tt   = jd_gpst + GPST2TT_SEC / 86400.0;
-        double et      = (jd_tt - SPODY_JD_J2000_TT) * 86400.0;
+        double jd_gpst = spody_greg_to_jd(y, mo, d, h, mi, sec);
+        double jd_tt   = jd_gpst + GPST2TT_SEC / SECONDSxDAY;
+        double et      = ET_FROM_JD(jd_tt);
 
         /* Rotation ECEF -> ICRF (IAU 2006/2000A_R06 + IERS EOP). */
         double R_i2bf[3][3], R_bf2i[3][3];
@@ -436,8 +408,8 @@ static int _gps_scan_file(FILE *fin,
             v_ecef[0] * 1.0e-3, v_ecef[1] * 1.0e-3, v_ecef[2] * 1.0e-3
         };
         double r_icrf[3], v_icrf_rot[3];
-        _rot3_apply(R_bf2i, r_ecef_km, r_icrf);
-        _rot3_apply(R_bf2i, v_ecef_km, v_icrf_rot);
+        spody_rotate_vector(R_bf2i, r_ecef_km, r_icrf);
+        spody_rotate_vector(R_bf2i, v_ecef_km, v_icrf_rot);
 
         /* omega x r in ICRF with the full ITRS z-axis (not nominal
          * z-hat). See spody_glonass.c for the J2024 ~480 arcsec

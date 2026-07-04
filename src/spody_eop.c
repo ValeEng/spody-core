@@ -28,13 +28,9 @@
  * predictions) otherwise. The has_bulletin_b flag is set accordingly.
  *
  * Time scale: the file's MJD column is UTC (per IERS spec). To use
- * it from ET (the SPODY-internal time), we run a textbook chain:
- *     ET  = seconds (TDB) past J2000      (input to interp)
- *     TT  ~= ET                            (TDB-TT < 2 ms, ignored)
- *     TAI = TT  - 32.184 s
- *     UTC = TAI - leap_seconds(UTC)        (integer-second jumps)
- * The leap-second table below covers 1972-01-01..present (37 leap
- * seconds added). Adding a new leap second is one row at the bottom.
+ * it from ET (the SPODY-internal time) we go through
+ * spody_et_to_mjd_utc (spody_time.c), which owns the single C-side
+ * leap-second table.
  */
 #include "spody_eop.h"
 
@@ -46,96 +42,7 @@
 #include <string.h>
 
 #include "spody_const.h"
-
-/* ----------------------------------------------------------------------
- * Time-scale plumbing: ET (TDB) -> UTC MJD
- * ----------------------------------------------------------------------
- *
- * Leap-second table: (MJD_UTC at which leap second is INTRODUCED,
- * cumulative TAI - UTC in seconds after that introduction).
- *
- * Source: IERS Bulletin C history,
- *   https://hpiers.obspm.fr/iers/bul/bulc/Leap_Second.dat
- *
- * The last leap second was inserted at the end of 2016-12-31; no
- * new one has been scheduled since (BIPM CGPM 2022 resolution
- * recommends phasing out leap seconds by/around 2035). Until then
- * this table must be updated when IERS Bulletin C announces a new
- * leap-second insertion.
- */
-typedef struct { double mjd_utc; double tai_minus_utc; } LeapEntry;
-
-static const LeapEntry _leap_table[] = {
-    { 41317.0, 10.0 },  /* 1972-01-01 -- first IERS-defined entry  */
-    { 41499.0, 11.0 },  /* 1972-07-01 */
-    { 41683.0, 12.0 },  /* 1973-01-01 */
-    { 42048.0, 13.0 },  /* 1974-01-01 */
-    { 42413.0, 14.0 },  /* 1975-01-01 */
-    { 42778.0, 15.0 },  /* 1976-01-01 */
-    { 43144.0, 16.0 },  /* 1977-01-01 */
-    { 43509.0, 17.0 },  /* 1978-01-01 */
-    { 43874.0, 18.0 },  /* 1979-01-01 */
-    { 44239.0, 19.0 },  /* 1980-01-01 */
-    { 44786.0, 20.0 },  /* 1981-07-01 */
-    { 45151.0, 21.0 },  /* 1982-07-01 */
-    { 45516.0, 22.0 },  /* 1983-07-01 */
-    { 46247.0, 23.0 },  /* 1985-07-01 */
-    { 47161.0, 24.0 },  /* 1988-01-01 */
-    { 47892.0, 25.0 },  /* 1990-01-01 */
-    { 48257.0, 26.0 },  /* 1991-01-01 */
-    { 48804.0, 27.0 },  /* 1992-07-01 */
-    { 49169.0, 28.0 },  /* 1993-07-01 */
-    { 49534.0, 29.0 },  /* 1994-07-01 */
-    { 50083.0, 30.0 },  /* 1996-01-01 */
-    { 50630.0, 31.0 },  /* 1997-07-01 */
-    { 51179.0, 32.0 },  /* 1999-01-01 */
-    { 53736.0, 33.0 },  /* 2006-01-01 */
-    { 54832.0, 34.0 },  /* 2009-01-01 */
-    { 56109.0, 35.0 },  /* 2012-07-01 */
-    { 57204.0, 36.0 },  /* 2015-07-01 */
-    { 57754.0, 37.0 },  /* 2017-01-01 -- current value as of 2024  */
-};
-static const size_t _leap_table_n =
-        sizeof _leap_table / sizeof _leap_table[0];
-
-/* Return TAI-UTC at the given UTC MJD. Step-function: piecewise
- * constant between consecutive leap-second insertions. */
-static double _tai_minus_utc(double mjd_utc) {
-    /* For MJDs before the first table entry we return 10 -- the
-     * pre-1972 TAI-UTC offset history is fractional and irrelevant
-     * for GNSS/Earth-orbit propagation. */
-    if (mjd_utc < _leap_table[0].mjd_utc) return _leap_table[0].tai_minus_utc;
-    for (size_t i = _leap_table_n; i-- > 0; ) {
-        if (mjd_utc >= _leap_table[i].mjd_utc) {
-            return _leap_table[i].tai_minus_utc;
-        }
-    }
-    return _leap_table[0].tai_minus_utc;
-}
-
-/* ET (TDB s past J2000) -> UTC MJD.
- * Single-iteration fixed-point: TAI-UTC is a step function of UTC,
- * so we first estimate UTC from TT-32.184s (treating it as TAI), then
- * subtract the leap-second offset to get the actual UTC. The estimate
- * is wrong by at most ~37 seconds (current leap offset), which never
- * straddles a leap-second boundary unless the user picks an ET within
- * 37 seconds of midnight UTC on a leap day -- in which case one more
- * iteration would fix it. We do the second iteration to be safe.
- *
- * TDB-TT correction is <2 ms over the EOP table's century-scale
- * coverage and well below the daily EOP sampling, so we treat
- * TT == ET.*/
-static double _et_to_mjd_utc(double et) {
-    double mjd_tt  = (et / SECONDSxDAY) + (JD_J2000 - 2400000.5);
-    double mjd_tai = mjd_tt - 32.184 / SECONDSxDAY;
-    /* First pass: guess UTC = TAI - leap(at TAI). */
-    double leap = _tai_minus_utc(mjd_tai);
-    double mjd_utc = mjd_tai - leap / SECONDSxDAY;
-    /* Second pass with the better UTC argument to leap(). */
-    leap = _tai_minus_utc(mjd_utc);
-    mjd_utc = mjd_tai - leap / SECONDSxDAY;
-    return mjd_utc;
-}
+#include "spody_time.h"
 
 /* ----------------------------------------------------------------------
  * Text parser for finals2000A.all
@@ -346,7 +253,7 @@ int spody_interpolate_eop(MappedEOP *map, double et,
     if (!map || !map->med || map->med->n_records == 0) return -1;
     const MappedEOPData *med = map->med;
 
-    double mjd = _et_to_mjd_utc(et);
+    double mjd = spody_et_to_mjd_utc(et);
     if (mjd < med->mjd_first || mjd > med->mjd_last_predicted) {
         return -1;   /* out of coverage */
     }

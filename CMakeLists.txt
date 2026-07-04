@@ -135,6 +135,7 @@ set(SOURCES
     src/spody_gps.c
     src/spody_solver.c
     src/spody_sp3.c
+    src/spody_time.c
     src/spody_version.c
 )
 

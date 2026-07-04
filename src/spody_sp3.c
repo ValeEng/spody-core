@@ -50,6 +50,9 @@
 #include "spody_eop.h"
 #include "spody_earth_orientation.h"
 #include "spody_forcemodels.h"   /* ForceModelContext */
+#include "spody_const.h"
+#include "spody_math.h"
+#include "spody_time.h"
 
 /* Static offsets carried by the SpOdy SPDYOUT_ format. Kept in sync
  * with spody/src/sim_run.c -- see comment block at the top of the
@@ -58,48 +61,10 @@
 #define SPODY_SP3_OUT_VERSION     1u
 #define SPODY_SP3_OUT_STATE_DIM   6u
 
-/* GPS time -> TT offset in seconds. GPS time is locked to TAI - 19 s
- * since the GPS epoch (1980-01-06 UTC = TAI 1980-01-06 + 19 s); TT
- * runs TAI + 32.184 s. So TT = GPS + 19 + 32.184 = GPS + 51.184 s.
- * No leap-second table required: this offset is constant by
- * definition of the GPS time scale. */
-#define SPODY_GPS_TO_TT_SEC       51.184
-
-/* TT epoch for the J2000.0 reference: JD 2451545.0 TT (= 2000-01-01
- * 12:00 TT). spody-core's `et` is TDB seconds past this epoch; TDB-TT
- * is sub-millisecond and negligible for orbital validation. */
-#define SPODY_JD_J2000_TT         2451545.0
-
 /* SP3 line buffer. The spec caps records at 80 columns but real-world
  * IGS files sometimes carry trailing whitespace and the trailing
  * accuracy/exclude flag block, so 256 is comfortably above. */
 #define SPODY_SP3_LINE            256
-
-/* Gregorian (UTC-like) date -> Julian Day at midnight + fractional
- * day. Standard Meeus algorithm (Astronomical Algorithms, ch. 7);
- * valid for any date in the Gregorian calendar (post 1582-10-15)
- * which more than covers any GPS epoch (post 1980). The y/m/d are
- * the wall-clock fields verbatim from the SP3 epoch row. */
-static double _greg_to_jd(int y, int m, int d, int hh, int mn, double ss) {
-    if (m <= 2) { y -= 1; m += 12; }
-    int A = y / 100;
-    int B = 2 - A + (A / 4);
-    double jd_midnight = floor(365.25 * (double)(y + 4716))
-                        + floor(30.6001 * (double)(m + 1))
-                        + (double)d + (double)B - 1524.5;
-    double day_frac = ((double)hh * 3600.0 + (double)mn * 60.0 + ss) / 86400.0;
-    return jd_midnight + day_frac;
-}
-
-/* Matrix-vector multiply for the body-fixed to ICRF rotation. The
- * SP3 position is in ITRF (Earth body-fixed for our purposes); we
- * rotate it into ICRF for the output binary. Inlined here rather
- * than pulling spody_math just for one mat*vec. */
-static void _rot3_apply(const double R[3][3], const double v[3], double out[3]) {
-    out[0] = R[0][0]*v[0] + R[0][1]*v[1] + R[0][2]*v[2];
-    out[1] = R[1][0]*v[0] + R[1][1]*v[1] + R[1][2]*v[2];
-    out[2] = R[2][0]*v[0] + R[2][1]*v[1] + R[2][2]*v[2];
-}
 
 /* Write the 24-byte SPDYOUT_ preamble. Returns 0 on success, non-zero
  * on a short write (which on a fresh fopen("wb") essentially never
@@ -151,9 +116,11 @@ static int _sp3_scan_file(FILE *fin,
                        &yy, &mm, &dd, &hh, &mn, &ss) != 6) {
                 continue;
             }
-            double jd_gps = _greg_to_jd(yy, mm, dd, hh, mn, ss);
-            double jd_tt  = jd_gps + SPODY_GPS_TO_TT_SEC / 86400.0;
-            cur_et        = (jd_tt - SPODY_JD_J2000_TT) * 86400.0;
+            /* SP3 epochs are GPST; TT = GPST + 51.184 s exactly, no
+             * leap-second table required (GPST2TT_SEC in spody_const.h). */
+            double jd_gps = spody_greg_to_jd(yy, mm, dd, hh, mn, ss);
+            double jd_tt  = jd_gps + GPST2TT_SEC / SECONDSxDAY;
+            cur_et        = ET_FROM_JD(jd_tt);
             have_epoch    = 1;
             continue;
         }
@@ -174,7 +141,7 @@ static int _sp3_scan_file(FILE *fin,
         spody_bf_rotation_earth(ctx, cur_et, R_i2bf, R_bf2i);
         double pos_itrf[3] = { x_itrf, y_itrf, z_itrf };
         double pos_icrf[3];
-        _rot3_apply(R_bf2i, pos_itrf, pos_icrf);
+        spody_rotate_vector(R_bf2i, pos_itrf, pos_icrf);
 
         /* Time column = integrator's 0-based t. Multi-file mode:
          * et_first anchored on the FIRST written record across ALL

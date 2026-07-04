@@ -31,6 +31,7 @@
  * locally other than the algorithm-specific coefficients of IAU
  * formulas (which carry IERS / Simon / Souchay citations inline). */
 #include "spody_const.h"
+#include "spody_time.h"
 
 /* Filenames inside the IAU 2006 directory (matches the names IERS
  * publishes at chapter5/additional_info/). */
@@ -603,20 +604,13 @@ static void _build_Q(double X, double Y, double s, double Q[3][3]) {
 
 /* ET (TDB s past J2000) + dUT1 (s) -> JD_UT1.
  *
- * TT - TAI = 32.184 s (exact)
- * TAI - UTC = leap seconds. We use 37 s (TAI-UTC since 2017-01-01,
- * no leap second inserted since). For dates between leap-second
- * jumps this is exact; the worst-case 1 s of UT1 error on a leap-day
- * boundary moves ERA by ~7.3e-5 rad (~15") which is way below mas.
- *
- * TDB - TT is bounded by ~2 ms over the EOP table's coverage and is
- * folded into the ERA fractional-day argument; ignored. */
+ * UTC comes from the full leap-second chain in spody_time.c (exact
+ * at any post-1972 epoch, 37 s post-2017). TDB - TT is bounded by
+ * ~2 ms over the EOP table's coverage and is folded into the ERA
+ * fractional-day argument; ignored. */
 static double _jd_ut1_from_et(double et, double dut1_sec) {
-    const double leap = 37.0;
-    double mjd_tt  = et / SECONDSxDAY + (JD_J2000 - 2400000.5);
-    double mjd_tai = mjd_tt  - 32.184 / SECONDSxDAY;
-    double mjd_utc = mjd_tai - leap   / SECONDSxDAY;
-    return (mjd_utc + 2400000.5) + dut1_sec / SECONDSxDAY;
+    double mjd_utc = spody_et_to_mjd_utc(et);
+    return (mjd_utc + JD_MJD_EPOCH) + dut1_sec / SECONDSxDAY;
 }
 
 /* Identity-rotation fallback for the misconfiguration path. */

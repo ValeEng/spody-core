@@ -45,6 +45,8 @@
 #include "spody_earth_orientation.h"
 #include "spody_forcemodels.h"
 #include "spody_const.h"
+#include "spody_math.h"
+#include "spody_time.h"
 
 #define SPODY_GLONASS_OUT_MAGIC      "SPDYOUT_"
 #define SPODY_GLONASS_OUT_VERSION    1u
@@ -53,23 +55,6 @@
 /* RINEX-NAV nav lines fit in 80 cols + newline + sentinel; 256 covers
  * any RINEX 3.x version with comfortable slack. */
 #define SPODY_RINEX_LINE             256
-
-/* TAI - UTC, constant since the 2017-01-01 leap second. For dates
- * before 2017 a proper leap-second table (spody_eop.c has one) would
- * be needed; this converter is documented to target post-2017 data. */
-#define SPODY_TAI_MINUS_UTC_SEC      37.0
-
-/* TT - TAI is exact by IAU definition. TDB - TT is <2 ms, far below
- * broadcast precision (~few m / cm-per-s), so we use TDB ~ TT. */
-#define SPODY_TT_MINUS_TAI_SEC       32.184
-
-/* Nominal sidereal Earth rotation rate, IERS Conventions 2010 sec.
- * 1.4. Polar-motion corrections to the rotation axis are <1e-7 of
- * this magnitude and ignored here (broadcast (r, v) is itself only
- * decimetre / cm-per-s, well above any omega correction). */
-#define SPODY_OMEGA_EARTH_RADPS      7.2921151467e-5
-
-#define SPODY_JD_J2000_TT            2451545.0
 
 /* Fortran-D exponent normaliser for sscanf. RINEX 3 still emits
  * 1.23D-04 -- swap to E in place (private buffer copy). */
@@ -83,27 +68,6 @@ static double _parse_rinex_double(const char *token) {
     }
     buf[i] = '\0';
     return strtod(buf, NULL);
-}
-
-/* Meeus Gregorian -> JD. Returns JD at midnight + day fraction. The
- * y/m/d/hh/mn/ss values are taken verbatim from the RINEX TOC line:
- * for GLONASS records that is UTC per RINEX 3 spec sect. 6.10.5. */
-static double _greg_to_jd(int y, int m, int d, int hh, int mn, double ss) {
-    if (m <= 2) { y -= 1; m += 12; }
-    int A = y / 100;
-    int B = 2 - A + (A / 4);
-    double jd_midnight = floor(365.25 * (double)(y + 4716))
-                        + floor(30.6001 * (double)(m + 1))
-                        + (double)d + (double)B - 1524.5;
-    double day_frac = ((double)hh * 3600.0 + (double)mn * 60.0 + ss) / 86400.0;
-    return jd_midnight + day_frac;
-}
-
-/* 3x3 matrix-vector multiply (out = R . v). */
-static void _rot3_apply(const double R[3][3], const double v[3], double out[3]) {
-    out[0] = R[0][0]*v[0] + R[0][1]*v[1] + R[0][2]*v[2];
-    out[1] = R[1][0]*v[0] + R[1][1]*v[1] + R[1][2]*v[2];
-    out[2] = R[2][0]*v[0] + R[2][1]*v[1] + R[2][2]*v[2];
 }
 
 /* SPDYOUT_ 24-byte preamble identical to sim_run.c's writer. */
@@ -239,12 +203,16 @@ static int _glonass_scan_file(FILE *fin,
         }
         (void)_parse_rinex_double;  /* kept for documentation symmetry */
 
-        /* --- Time UTC -> ET TDB --------------------------------- */
-        double jd_utc = _greg_to_jd(y, mo, d, h, mi, sec);
-        double jd_tt  = jd_utc +
-                        (SPODY_TAI_MINUS_UTC_SEC + SPODY_TT_MINUS_TAI_SEC)
-                        / 86400.0;
-        double et     = (jd_tt - SPODY_JD_J2000_TT) * 86400.0;
+        /* --- Time UTC -> ET TDB ---------------------------------
+         * RINEX GLONASS TOC is UTC (RINEX 3 sect. 6.10.5). Bridge
+         * UTC -> TAI via the leap chain (37 s post-2017, exact for
+         * older data too), then TAI -> TT with the fixed 32.184 s
+         * (TT2TAI_SEC = TAI - TT). TDB ~ TT (<2 ms, far below
+         * broadcast precision). */
+        double jd_utc  = spody_greg_to_jd(y, mo, d, h, mi, sec);
+        double tai_utc = spody_tai_minus_utc(jd_utc - JD_MJD_EPOCH);
+        double jd_tt   = jd_utc + (tai_utc - TT2TAI_SEC) / SECONDSxDAY;
+        double et      = ET_FROM_JD(jd_tt);
 
         /* --- Rotation ECEF -> ICRF ----------------------------- */
         double R_i2bf[3][3], R_bf2i[3][3];
@@ -253,8 +221,8 @@ static int _glonass_scan_file(FILE *fin,
         double r_ecef[3] = { px, py, pz };
         double v_ecef[3] = { vx, vy, vz };
         double r_icrf[3], v_icrf_rot[3];
-        _rot3_apply(R_bf2i, r_ecef, r_icrf);
-        _rot3_apply(R_bf2i, v_ecef, v_icrf_rot);
+        spody_rotate_vector(R_bf2i, r_ecef, r_icrf);
+        spody_rotate_vector(R_bf2i, v_ecef, v_icrf_rot);
 
         /* omega_earth x r_ICRF with the FULL rotation axis. At J2024 the
          * ITRS z-axis (= Earth's mean rotation axis) is tilted by
@@ -265,9 +233,9 @@ static int _glonass_scan_file(FILE *fin,
          * Polar motion of the actual instantaneous axis from the mean
          * ITRS axis is sub-arcsec and ignored. */
         double omega_icrf[3] = {
-            SPODY_OMEGA_EARTH_RADPS * R_bf2i[0][2],
-            SPODY_OMEGA_EARTH_RADPS * R_bf2i[1][2],
-            SPODY_OMEGA_EARTH_RADPS * R_bf2i[2][2],
+            EARTH_ROT_RATE_RADPS * R_bf2i[0][2],
+            EARTH_ROT_RATE_RADPS * R_bf2i[1][2],
+            EARTH_ROT_RATE_RADPS * R_bf2i[2][2],
         };
         double v_icrf[3];
         v_icrf[0] = v_icrf_rot[0]
