@@ -130,6 +130,14 @@ extern "C" {
 #define NEPTUNE_RADIUS 24764.0
 #define PLUTO_RADIUS   1195.0
 
+    // WGS-84 reference ellipsoid (NGA.STND.0036). Used for the
+    // ECEF -> geodetic conversion feeding the Earth atmosphere model
+    // (NRLMSISE-00 takes geodetic latitude/altitude). Distinct from
+    // EARTH_RADIUS (SPICE mean radius, used for impact/eclipse
+    // geometry) on purpose -- do not merge them.
+#define WGS84_A_KM  6378.137
+#define WGS84_INV_F 298.257223563
+
 #define EMRAT 0.813005682214972154E+02 //TBD from JPL DE440
 
     // Primary-pair mean separations used by the CR3BP model.

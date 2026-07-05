@@ -72,6 +72,39 @@ double spody_greg_to_jd(int y, int m, int d, int hh, int mn, double ss) {
     return jd_midnight + day_frac;
 }
 
+void spody_mjd_to_doy(double mjd, int *year_out, int *doy_out,
+                      double *sec_of_day_out) {
+    /* Day / time-of-day split first: everything below is integer. */
+    double day = floor(mjd);
+    if (sec_of_day_out) *sec_of_day_out = (mjd - day) * SECONDSxDAY;
+
+    /* Fliegel-Van Flandern inverse (JDN -> Gregorian civil date).
+     * JDN is noon-based, so the civil date containing this MJD's
+     * midnight has JDN = floor(mjd) + 2400001. All-integer
+     * arithmetic; positive for any MJD >= 0 (post-1858), where C
+     * truncation and Python floor division agree -- keep it that way
+     * or the spopy twin breaks. */
+    long l = (long)day + 2400001L + 68569L;
+    long n = (4L * l) / 146097L;
+    long i, j, d, m, y;
+    l = l - (146097L * n + 3L) / 4L;
+    i = (4000L * (l + 1L)) / 1461001L;
+    l = l - (1461L * i) / 4L + 31L;
+    j = (80L * l) / 2447L;
+    d = l - (2447L * j) / 80L;
+    l = j / 11L;
+    m = j + 2L - 12L * l;
+    y = 100L * (n - 49L) + i + l;
+
+    if (year_out) *year_out = (int)y;
+    if (doy_out) {
+        static const int cum_days[12] =
+            {0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334};
+        int leap = ((y % 4 == 0 && y % 100 != 0) || y % 400 == 0);
+        *doy_out = cum_days[m - 1] + (int)d + ((m > 2 && leap) ? 1 : 0);
+    }
+}
+
 double spody_tai_minus_utc(double mjd_utc) {
     if (mjd_utc < leap_table[0].mjd_utc) return leap_table[0].tai_minus_utc;
     for (size_t i = leap_table_n; i-- > 0; ) {

@@ -20,7 +20,8 @@
  *
  *   1. The contract every atmosphere model implements
  *      (`SpodyAtmosphereDensityFn` callback + `SpodyAtmosphere` handle).
- *      The drag force module (`spody_drag.{h,c}`) calls the callback
+ *      The drag force (`spody_force_drag`, spody_forcemodels.c) calls
+ *      the callback
  *      generically -- it does not know whether the underlying model is
  *      NRLMSISE-00 (Earth), JB2008 (Earth, future), MCD (Mars, future)
  *      or a 4-parameter exponential. New models are added by writing
@@ -154,6 +155,30 @@ int spody_interpolate_space_weather(MappedSpaceWeather *map, double et,
                                      double *f107_obs_avg81_out,
                                      double *ap_daily_out,
                                      double  ap_3h_out[8]);
+
+/* Space weather inputs in the exact layout NRLMSISE-00 prescribes
+ * (see spody_nrlmsise00.h): daily values are taken from the UT-day
+ * records WITHOUT interpolation, because that is how the model was
+ * fit.
+ *
+ *   *f107_prev_out : observed daily F10.7 of the day BEFORE the
+ *                    query day, sfu
+ *   *f107a_out     : observed 81-day centered F10.7 average of the
+ *                    query day, sfu
+ *   ap_msis_out[7] : [0] daily Ap of the query day,
+ *                    [1] 3h ap of the bin containing `et`,
+ *                    [2..4] bins 3/6/9 hours earlier,
+ *                    [5] mean of the eight bins 12..33 h earlier,
+ *                    [6] mean of the eight bins 36..57 h earlier
+ *                    (this is Fortran AP(1:7) with SW(9) = -1).
+ *
+ * Any output pointer may be NULL. Returns 0 on success, -1 when `et`
+ * is outside the table or closer than 3 days to its start (the ap
+ * history reaches back 57 hours). */
+int spody_space_weather_msis_inputs(MappedSpaceWeather *map, double et,
+                                     double *f107_prev_out,
+                                     double *f107a_out,
+                                     double  ap_msis_out[7]);
 
 /* MJD of the last row in the OBSERVED section. Past this MJD the
  * table is CelesTrak's ~45-day prediction; the F10.7 / Ap predictions

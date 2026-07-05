@@ -60,6 +60,14 @@ double spody_tai_minus_utc(double mjd_utc);
  * ET->UTC and the UTC->ET direction call this without iterating. */
 double spody_tdb_minus_tt(double et);
 
+/* MJD -> Gregorian civil year, day of year (1..366) and seconds of
+ * day. Scale-agnostic: the outputs are in whatever time scale the MJD
+ * is in (pass a UTC MJD to get the UTC calendar labels NRLMSISE-00 /
+ * space-weather tables want). Valid for any MJD >= 0 (post-1858).
+ * Any output pointer may be NULL. Twin: spopy.time.mjd_to_doy. */
+void spody_mjd_to_doy(double mjd, int *year_out, int *doy_out,
+                      double *sec_of_day_out);
+
 /* ET (TDB seconds past J2000) -> UTC MJD. Full chain:
  * TT = ET - deltet, TAI = TT - 32.184 s, UTC = TAI - leap(UTC).
  * TAI-UTC is a step function of UTC itself, so a two-iteration fixed

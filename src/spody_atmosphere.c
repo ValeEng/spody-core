@@ -17,8 +17,10 @@
  * spody_atmosphere.c -- CelesTrak space weather parser + ET lookup.
  *
  * Atmosphere callback / SpodyAtmosphere struct have no code here --
- * they are pure interface, consumed by `spody_drag.{h,c}` and
- * implemented by per-model wrappers at the application layer.
+ * they are pure interface, consumed by `spody_force_drag`
+ * (spody_forcemodels.c) and implemented by per-model wrappers at the
+ * application layer (the density model itself lives in the engine:
+ * spody_nrlmsise00.c).
  *
  * Parser targets the CelesTrak CSV combined file (`SW-All.csv` /
  * `SW-Last5Years.csv`). The CSV header is stable and self-describing,
@@ -52,22 +54,17 @@
 #include "spody_const.h"
 #include "spody_time.h"
 
-/* Gregorian YYYY-MM-DD -> MJD (UTC midnight). Fliegel-Van Flandern
- * formula via Julian Day Number; valid for dates >= 1858-11-17
- * (MJD epoch). Returns -1.0 on malformed input. */
-static double _date_to_mjd(int year, int month, int day) {
+/* Gregorian YYYY-MM-DD -> MJD (UTC midnight) via the shared Meeus
+ * chain in spody_time.c. Returns -1.0 on malformed input. */
+static double date_to_mjd(int year, int month, int day) {
     if (month < 1 || month > 12 || day < 1 || day > 31) return -1.0;
-    int a = (14 - month) / 12;
-    int y = year + 4800 - a;
-    int m = month + 12 * a - 3;
-    int jdn = day + (153 * m + 2) / 5 + 365 * y + y / 4 - y / 100 + y / 400 - 32045;
-    return (double)jdn - 2400001.0;  /* JDN at noon -> MJD at midnight */
+    return spody_greg_to_jd(year, month, day, 0, 0, 0.0) - JD_MJD_EPOCH;
 }
 
 /* Split a CSV line into up to `cap` field pointers (in-place: commas
  * are replaced with NULs). Returns the number of fields produced.
  * Empty fields are kept as zero-length strings, not skipped. */
-static int _split_csv(char *line, char *fields[], int cap) {
+static int split_csv(char *line, char *fields[], int cap) {
     int n = 0;
     char *p = line;
     fields[n++] = p;
@@ -80,7 +77,7 @@ static int _split_csv(char *line, char *fields[], int cap) {
 
 /* Parse a trimmed CSV field as a double; returns 1 on success, 0 on
  * blank / unparseable (out value untouched). */
-static int _csv_to_double(const char *s, double *out) {
+static int csv_to_double(const char *s, double *out) {
     while (*s && isspace((unsigned char)*s)) ++s;
     if (!*s) return 0;
     char *end = NULL;
@@ -149,13 +146,13 @@ int spody_setup_MappedSpaceWeatherData(MappedSpaceWeatherData *msw,
         if (ll == 0) continue;
 
         char *fields[64];
-        int nf = _split_csv(line, fields, 64);
+        int nf = split_csv(line, fields, 64);
         if (nf < COL_N_MIN) continue;
 
         /* DATE: YYYY-MM-DD */
         int yy, mm, dd;
         if (sscanf(fields[COL_DATE], "%d-%d-%d", &yy, &mm, &dd) != 3) continue;
-        double mjd = _date_to_mjd(yy, mm, dd);
+        double mjd = date_to_mjd(yy, mm, dd);
         if (mjd < 0.0) continue;
 
         SpaceWeatherRecord rec;
@@ -164,11 +161,11 @@ int spody_setup_MappedSpaceWeatherData(MappedSpaceWeatherData *msw,
 
         for (int j = 0; j < 8; ++j) {
             double v = 0.0;
-            if (_csv_to_double(fields[COL_AP1 + j], &v)) rec.ap_3h[j] = v;
+            if (csv_to_double(fields[COL_AP1 + j], &v)) rec.ap_3h[j] = v;
         }
-        _csv_to_double(fields[COL_AP_AVG],            &rec.ap_daily);
-        _csv_to_double(fields[COL_F107_OBS],          &rec.f107_obs);
-        _csv_to_double(fields[COL_F107_OBS_CENTER81], &rec.f107_obs_avg81);
+        csv_to_double(fields[COL_AP_AVG],            &rec.ap_daily);
+        csv_to_double(fields[COL_F107_OBS],          &rec.f107_obs);
+        csv_to_double(fields[COL_F107_OBS_CENTER81], &rec.f107_obs_avg81);
 
         /* "OBS" rows are observed; "INT" (interpolated) and "PRD"
          * (predicted) are everything past the data cutoff. CelesTrak
@@ -225,8 +222,8 @@ int spody_free_MappedSpaceWeather(MappedSpaceWeather *map) {
 /* Binary search: returns the index `i` such that records[i].mjd <= mjd
  * < records[i+1].mjd. Falls back to the last index when mjd >=
  * records[last].mjd and to 0 when mjd <= records[0].mjd. */
-static size_t _find_bracketing_index(const MappedSpaceWeatherData *msw,
-                                     double mjd) {
+static size_t find_bracketing_index(const MappedSpaceWeatherData *msw,
+                                    double mjd) {
     if (msw->n_records == 0) return 0;
     if (mjd <= msw->records[0].mjd) return 0;
     if (mjd >= msw->records[msw->n_records - 1].mjd) return msw->n_records - 1;
@@ -260,7 +257,7 @@ int spody_interpolate_space_weather(MappedSpaceWeather *map, double et,
             && msw->records[map->cached_idx + 1].mjd >  mjd) {
         i = map->cached_idx;
     } else {
-        i = _find_bracketing_index(msw, mjd);
+        i = find_bracketing_index(msw, mjd);
         map->cached_idx = i;
         map->cached_valid = 1;
     }
@@ -285,6 +282,59 @@ int spody_interpolate_space_weather(MappedSpaceWeather *map, double et,
         for (int j = 0; j < 8; ++j) ap_3h_out[j] = rd->ap_3h[j];
     }
 
+    return 0;
+}
+
+int spody_space_weather_msis_inputs(MappedSpaceWeather *map, double et,
+                                     double *f107_prev_out,
+                                     double *f107a_out,
+                                     double  ap_msis_out[7]) {
+    if (!map || !map->msw) return -1;
+    const MappedSpaceWeatherData *msw = map->msw;
+    if (msw->n_records == 0) return -1;
+
+    double mjd = spody_et_to_mjd_utc(et);
+    /* No interpolation here (the model prescription is built on daily
+     * values and UT-day-aligned 3h bins), so the whole last predicted
+     * day is usable, not just its midnight. */
+    if (mjd < msw->mjd_first || mjd >= msw->mjd_last_predicted + 1.0)
+        return -1;
+
+    double day = floor(mjd);
+    size_t idx = (size_t)(day - msw->mjd_first);
+    /* The prescription reaches back 57 h: require 3 full prior days
+     * and verify the window is gap-free (daily-stepped records). */
+    if (idx < 3 || idx >= msw->n_records) return -1;
+    if (msw->records[idx].mjd != day || msw->records[idx - 3].mjd != day - 3.0)
+        return -1;
+
+    if (f107_prev_out) *f107_prev_out = msw->records[idx - 1].f107_obs;
+    if (f107a_out)     *f107a_out     = msw->records[idx].f107_obs_avg81;
+
+    if (ap_msis_out) {
+        /* Global 3h-bin index since mjd_first; bin b of day i is
+         * records[i].ap_3h[b] (UT-aligned: 00-03, 03-06, ...). */
+        long g = (long)idx * 8 + (int)((mjd - day) * 8.0);
+        double s;
+        int k;
+        ap_msis_out[0] = msw->records[idx].ap_daily;
+        for (k = 0; k < 4; ++k) {   /* current bin + 3h/6h/9h lags */
+            long b = g - k;
+            ap_msis_out[1 + k] = msw->records[b / 8].ap_3h[b % 8];
+        }
+        s = 0.0;                    /* average of the 12..33 h lags  */
+        for (k = 4; k <= 11; ++k) {
+            long b = g - k;
+            s += msw->records[b / 8].ap_3h[b % 8];
+        }
+        ap_msis_out[5] = s / 8.0;
+        s = 0.0;                    /* average of the 36..57 h lags  */
+        for (k = 12; k <= 19; ++k) {
+            long b = g - k;
+            s += msw->records[b / 8].ap_3h[b % 8];
+        }
+        ap_msis_out[6] = s / 8.0;
+    }
     return 0;
 }
 
