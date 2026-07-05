@@ -96,10 +96,12 @@ typedef struct {
     double record[];
 }EphemerisFile_Record;
 
-/* Shared, read-only ephemeris data: header and records point into the
- * memory-mapped file (or, for the partial setup, into private heap copies)
- * and are not mutated by query calls. A single MappedEphemerisData can be
- * safely shared across threads.
+/* Shared, read-only ephemeris data. The header is always a private heap
+ * copy (its coverage epochs are reconciled against the records for subset
+ * files -- the mapping itself is read-only); records point into the
+ * memory-mapped file (or, for the partial setup, into private heap
+ * copies). Neither is mutated by query calls, so a single
+ * MappedEphemerisData can be safely shared across threads.
  *
  * Time scale: epochs in the file are already in ET (Ephemeris Time, seconds
  * past J2000 TDB) thanks to the SPDYEPET file format. The query API takes

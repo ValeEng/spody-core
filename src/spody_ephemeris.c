@@ -209,10 +209,10 @@ static int create_binary_ephemeris_file(EphemerisFile_Header *ep, int64_t *old_e
     printf("in create binary\n");
     #endif
     FILE *fp_ascp = fopen(ascp_filename, "r");
-    if (!fp_ascp) { perror("Errore file ascp"); return -1; }
+    if (!fp_ascp) { perror("cannot open ascp file"); return -1; }
 
     FILE *fp_bin = fopen(bin_filename, "ab");  // "ab" for append mode
-    if (!fp_bin) { perror("Errore file bin"); fclose(fp_ascp); return -1; }
+    if (!fp_bin) { perror("cannot open bin file"); fclose(fp_ascp); return -1; }
     #if DEBUG_EPHEMERIS == 1
     printf("file loaded\n");
     #endif
@@ -404,10 +404,13 @@ static int ephemeris_map_file(MappedEphemerisData *med, const char *filename) {
 
     if (mf_map_file(&med->mf, filename) != 0) return -2; //mapping error
 
-    med->header = (EphemerisFile_Header*)med->mf.ptr;
-    //printf("Mapped header start epoch: %.6f\n", med->header->start_epoch);
-    //printf("Mapped header end epoch: %.6f\n", med->header->end_epoch);
-    //printf("bytes per record: %d\n", med->header->bytes_per_record);
+    /* Private heap copy of the header: the file mapping is read-only
+     * (PAGE_READONLY / FILE_MAP_READ), and subset files need their
+     * coverage epochs reconciled below -- patching the mapped bytes
+     * would fault. Records stay pointers into the read-only map. */
+    med->header = malloc(sizeof *med->header);
+    if (!med->header) { mf_unmap_file(&med->mf); return -3; }
+    memcpy(med->header, med->mf.ptr, sizeof *med->header);
 
     #if DEBUG_EPHEMERIS == 1
     printf("mf_size : %zu\n",med->mf.size);
@@ -419,12 +422,16 @@ static int ephemeris_map_file(MappedEphemerisData *med, const char *filename) {
         printf("ephemeris_map_file: bad magic (got '%.8s', expected '%.8s'). "
                "Regenerate the .spody binary with the current spody_createfile_*.\n",
                med->header->magic, SPODY_EPH_MAGIC_ET);
+        free(med->header); med->header = NULL;
+        mf_unmap_file(&med->mf);
         return -10;
     }
     if (med->header->format_version != SPODY_EPH_FORMAT_VERSION) {
         printf("ephemeris_map_file: unsupported format_version %u (expected %u)\n",
                (unsigned)med->header->format_version,
                (unsigned)SPODY_EPH_FORMAT_VERSION);
+        free(med->header); med->header = NULL;
+        mf_unmap_file(&med->mf);
         return -11;
     }
 
@@ -441,7 +448,11 @@ static int ephemeris_map_file(MappedEphemerisData *med, const char *filename) {
     #endif
 
     med->records = (EphemerisFile_Record**)malloc(sizeof(EphemerisFile_Record*) * med->num_records);
-    if (!med->records) return -3;
+    if (!med->records) {
+        free(med->header); med->header = NULL;
+        mf_unmap_file(&med->mf);
+        return -3;
+    }
 
     uint8_t *ptr = (uint8_t*)med->mf.ptr + sizeof(EphemerisFile_Header);
     for (size_t i = 0; i < med->num_records; i++) {
@@ -452,6 +463,27 @@ static int ephemeris_map_file(MappedEphemerisData *med, const char *filename) {
         ptr += med->header->bytes_per_record;
     }
 
+    /* Subset files (e.g. a partial DE440 conversion covering only the
+     * chunks the user downloaded) may carry the full-span epochs the
+     * converter read from header.440 before knowing which chunks it
+     * would write. The records are the truth: reconcile the private
+     * header copy so the record-index arithmetic in
+     * get_body_position() stays exact. */
+    if (med->num_records > 0) {
+        double rec_start = med->records[0]->start_epoch;
+        double rec_end   = med->records[med->num_records - 1]->end_epoch;
+        if (med->header->start_epoch != rec_start ||
+            med->header->end_epoch   != rec_end) {
+            printf("ephemeris: subset file -- header claims %.3f .. %.3f ET "
+                   "but records cover %.3f .. %.3f ET; using the records' "
+                   "range.\n",
+                   med->header->start_epoch, med->header->end_epoch,
+                   rec_start, rec_end);
+            med->header->start_epoch = rec_start;
+            med->header->end_epoch   = rec_end;
+        }
+    }
+
     /* No runtime conversion needed: epochs in the file are already ET. */
     return 0;
 }
@@ -460,7 +492,9 @@ static int ephemeris_unmap_file(MappedEphemerisData *med) {
     if (!med) return -1;
 
     free(med->records); med->records = NULL;
-    med->header = NULL;
+    /* The header is always a private heap copy (see ephemeris_map_file
+     * and spody_setup_partialMappedEphemerisData). */
+    free(med->header); med->header = NULL;
     med->num_records = 0;
 
     return mf_unmap_file(&med->mf);
@@ -478,12 +512,12 @@ int spody_createfile_MappedEphemerisData(const char *path, const char **file_nam
     sprintf(bin_filename, "./%s/de%s.spody",path,de); 
 
     FILE *file = fopen(header_path,"r");
-    if (!file) { perror("Errore file header"); return -1; }
+    if (!file) { perror("cannot open header file"); return -1; }
 
     /* Truncate the destination on first open: avoids accidental append
      * to a previous run. Subsequent record writes use "ab". */
     FILE *fp_bin = fopen(bin_filename, "wb");
-    if (!fp_bin) { perror("Errore file bin"); fclose(file); return -1; }
+    if (!fp_bin) { perror("cannot open bin file"); fclose(file); return -1; }
 
     EphemerisFile_Header ep = {0};
     returnNumber = read_ephemeris_file_header(file, &ep);
@@ -533,28 +567,58 @@ int spody_createfile_MappedEphemerisData(const char *path, const char **file_nam
 
     }
 
+    /* The header was written before any chunk was converted, carrying
+     * the full-DE440 epoch span read from header.440. When only a
+     * subset of the ASCII chunks is converted (e.g. the GUI wizard's
+     * modern-era profile), refresh the on-disk epochs from the records
+     * actually written so the file is self-consistent. */
+    if (returnNumber == 0) {
+        FILE *fp_fix = fopen(bin_filename, "rb+");
+        if (fp_fix) {
+            EphemerisFile_Header hdr;
+            long file_size = 0;
+            if (fread(&hdr, sizeof hdr, 1, fp_fix) == 1 &&
+                fseek(fp_fix, 0, SEEK_END) == 0 &&
+                (file_size = ftell(fp_fix)) > (long)sizeof hdr &&
+                hdr.bytes_per_record > 0) {
+                long n_rec = (file_size - (long)sizeof hdr)
+                             / hdr.bytes_per_record;
+                long first_off = (long)sizeof hdr
+                    + (long)offsetof(EphemerisFile_Record, start_epoch);
+                long last_off  = (long)sizeof hdr
+                    + (n_rec - 1) * (long)hdr.bytes_per_record
+                    + (long)offsetof(EphemerisFile_Record, end_epoch);
+                double first_start = 0.0, last_end = 0.0;
+                if (n_rec > 0 &&
+                    fseek(fp_fix, first_off, SEEK_SET) == 0 &&
+                    fread(&first_start, sizeof first_start, 1, fp_fix) == 1 &&
+                    fseek(fp_fix, last_off, SEEK_SET) == 0 &&
+                    fread(&last_end, sizeof last_end, 1, fp_fix) == 1 &&
+                    (hdr.start_epoch != first_start ||
+                     hdr.end_epoch   != last_end)) {
+                    hdr.start_epoch = first_start;
+                    hdr.end_epoch   = last_end;
+                    if (fseek(fp_fix, 0, SEEK_SET) == 0 &&
+                        fwrite(&hdr, sizeof hdr, 1, fp_fix) == 1) {
+                        printf("header epochs refreshed to the converted "
+                               "range (%.3f .. %.3f ET)\n",
+                               first_start, last_end);
+                    }
+                }
+            }
+            fclose(fp_fix);
+        }
+    }
+
     return returnNumber;
 
 }
 
 int spody_setup_MappedEphemerisData(MappedEphemerisData *med, const char *filename){
-
-    int returnNumber =  ephemeris_map_file(med, filename);
-
-    if (med->header->start_epoch != med->records[0]->start_epoch){
-        printf("!It is a subset!\n");
-        printf("Header and ephemeris file have different start epoch.\n");
-        printf("Change header start epoch to the subset JD start.\n");
-        med->header->start_epoch = med->records[0]->start_epoch;
-    }
-    if (med->header->end_epoch != med->records[med->num_records-1]->end_epoch){
-        printf("!It is a subset!\n");
-        printf("Header and ephemeris file have different end epoch.\n");
-        printf("Change header end epoch to the subset JD end.\n");
-        med->header->end_epoch = med->records[med->num_records-1]->end_epoch;
-    }
-
-    return returnNumber;
+    /* Subset-coverage reconciliation happens inside ephemeris_map_file
+     * (on the private header copy) so the partial loader gets healed
+     * epochs too. */
+    return ephemeris_map_file(med, filename);
 }
 
 int spody_setup_MappedEphemeris(MappedEphemeris *map, const MappedEphemerisData *med){

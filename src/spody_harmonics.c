@@ -397,7 +397,7 @@ int spody_load_HarmonicGravityData(HarmonicGravityData *hgd, const char *filenam
     
     FILE *file = fopen(filename,"r");
     if (!file) {
-        perror("Errore apertura file");
+        perror("cannot open file");
         return -1;
     }
 
