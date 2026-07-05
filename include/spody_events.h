@@ -37,11 +37,14 @@ extern "C" {
  * accepted state, never by the integrator's per-stage callback.
  *
  * Localization precision:
- *   The event fires at the first accepted step where the predicate
- *   becomes true; the timestamp of the trigger is therefore the
- *   integrator timestamp at that step (precision ~ accepted h, of
- *   order 30 s on LLO with rel_tol = 1e-9). Sub-step root-finding via
- *   dense output is a planned extension but not implemented today.
+ *   One-shot kinds (impact) fire at the first accepted step where
+ *   the predicate becomes true; the timestamp is the integrator
+ *   timestamp at that step (precision ~ accepted h, of order 30 s on
+ *   LLO with rel_tol = 1e-9). Recurring kinds (eclipse, altitude
+ *   crossing) refine the crossing inside the accepted step via Brent
+ *   root-finding on the RK45 dense output (spody_event_check_refined,
+ *   sub-microsecond localization); per-event opt-out via the
+ *   `refined` flag falls back to step-boundary precision.
  *
  * Threading:
  *   SpodyEvent is small and copyable. Mission keeps a caller-owned
