@@ -207,12 +207,13 @@ static int _glonass_scan_file(FILE *fin,
          * RINEX GLONASS TOC is UTC (RINEX 3 sect. 6.10.5). Bridge
          * UTC -> TAI via the leap chain (37 s post-2017, exact for
          * older data too), then TAI -> TT with the fixed 32.184 s
-         * (TT2TAI_SEC = TAI - TT). TDB ~ TT (<2 ms, far below
-         * broadcast precision). */
+         * (TT2TAI_SEC = TAI - TT), then TT -> TDB with the deltet
+         * periodic term (+/-1.657 ms). */
         double jd_utc  = spody_greg_to_jd(y, mo, d, h, mi, sec);
         double tai_utc = spody_tai_minus_utc(jd_utc - JD_MJD_EPOCH);
         double jd_tt   = jd_utc + (tai_utc - TT2TAI_SEC) / SECONDSxDAY;
-        double et      = ET_FROM_JD(jd_tt);
+        double tt_sec  = ET_FROM_JD(jd_tt);
+        double et      = tt_sec + spody_tdb_minus_tt(tt_sec);
 
         /* --- Rotation ECEF -> ICRF ----------------------------- */
         double R_i2bf[3][3], R_bf2i[3][3];

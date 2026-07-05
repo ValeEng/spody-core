@@ -75,6 +75,17 @@ extern "C" {
 #define GPST2TT_SEC      51.184          // TT - GPST (= 19 + 32.184)
 #define TT2TAI_SEC       (-32.184)       // TAI - TT (exact)
 
+    // TDB - TT periodic term (SPICE `deltet` algorithm):
+    //   M = M0 + M1*ET, E = M + EB*sin(M), TDB-TT = K*sin(E).
+    // The four DELTET/* values published in NAIF's leap-seconds
+    // kernel (naif0012.tls); amplitude +/-1.657 ms. Implemented by
+    // spody_tdb_minus_tt (spody_time.c).
+#define DELTET_K    1.657e-3             // s     -- periodic amplitude
+#define DELTET_EB   1.671e-2             //       -- eccentricity of the
+                                         //          Earth-Moon barycenter orbit
+#define DELTET_M0   6.239996             // rad   -- mean anomaly at J2000
+#define DELTET_M1   1.99096871e-7        // rad/s -- mean-anomaly rate
+
     // GPS week structure. Week 0 starts 1980-01-06 00:00:00 GPST;
     // the half-week drives the week-rollover correction on tk.
 #define GPS_WEEK_SEC        604800.0

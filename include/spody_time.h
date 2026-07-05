@@ -29,11 +29,12 @@ extern "C" {
  *
  *   - Gregorian civil date -> Julian Date (Meeus)
  *   - TAI-UTC leap-second step function (IERS Bulletin C chain)
+ *   - TDB-TT periodic term (SPICE deltet)
  *   - ET (TDB s past J2000) -> UTC MJD
  *
  * The leap-second table lives in spody_time.c and NOWHERE else on the
  * C side. When IERS announces a new leap second, update that table
- * (one row) and the mirror in python/spopy/eop.py.
+ * (one row) and the mirror in python/spopy/time.py.
  * ---------------------------------------------------------------------- */
 
 /* Gregorian civil date -> Julian Date (JD at midnight + day fraction).
@@ -50,12 +51,21 @@ double spody_greg_to_jd(int y, int m, int d, int hh, int mn, double ss);
  * is irrelevant for GNSS / Earth-orbit propagation. */
 double spody_tai_minus_utc(double mjd_utc);
 
-/* ET (TDB seconds past J2000) -> UTC MJD.
- * Two-iteration fixed point around the leap-second step function:
- * TAI-UTC is a function of UTC itself, so a first estimate treats
- * TT - 32.184 s as UTC, then the offset is re-evaluated at the
- * estimated UTC. TDB-TT (<2 ms) is neglected: far below the daily
- * sampling of every UTC-indexed table this feeds (EOP, space weather). */
+/* TDB - TT in seconds at ET (TDB seconds past J2000): the SPICE
+ * `deltet` periodic term, K*sin(E) with a one-step Kepler solve
+ * (constants DELTET_* in spody_const.h, from the NAIF LSK kernel).
+ * Amplitude +/-1.657 ms. The argument may be ET or TT seconds
+ * interchangeably: swapping them changes the result by less than a
+ * picosecond, far below the formula's own fidelity, so both the
+ * ET->UTC and the UTC->ET direction call this without iterating. */
+double spody_tdb_minus_tt(double et);
+
+/* ET (TDB seconds past J2000) -> UTC MJD. Full chain:
+ * TT = ET - deltet, TAI = TT - 32.184 s, UTC = TAI - leap(UTC).
+ * TAI-UTC is a step function of UTC itself, so a two-iteration fixed
+ * point evaluates it first at TAI, then at the estimated UTC (the
+ * second pass only matters within 37 s of a leap boundary). Matches
+ * the SPICE ET->UTC conversion to sub-us. */
 double spody_et_to_mjd_utc(double et);
 
 #ifdef __cplusplus

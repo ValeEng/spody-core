@@ -44,10 +44,9 @@
  * precision).
  *
  * Time scale. GLONASS broadcast TOC is UTC per RINEX 3 spec sect. 6.
- * We chain UTC -> TAI -> TT -> TDB ~ TT with TAI - UTC = 37 s
- * (constant since 2017) and TT - TAI = 32.184 s. A future revision
- * could reuse the leap-second table in spody_eop.c for pre-2017
- * dates; for now the hard-coded 37 s is documented and sufficient.
+ * We chain UTC -> TAI -> TT -> TDB using the leap-second table and
+ * the deltet periodic term in spody_time.c (exact at any post-1972
+ * epoch) plus TT - TAI = 32.184 s.
  *
  * Wire format we emit (must match spody/src/sim_run.c and the sp3
  * converter):

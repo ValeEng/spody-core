@@ -24,7 +24,7 @@
  * chain; 37 s since 2017-01-01, none scheduled since (BIPM CGPM 2022
  * recommends phasing leap seconds out by/around 2035).
  *
- * THE single C-side copy. Python mirror: python/spopy/eop.py.
+ * THE single C-side copy. Python mirror: python/spopy/time.py.
  * ---------------------------------------------------------------------- */
 typedef struct { double mjd_utc; double tai_minus_utc; } LeapEntry;
 
@@ -80,12 +80,19 @@ double spody_tai_minus_utc(double mjd_utc) {
     return leap_table[0].tai_minus_utc;
 }
 
+double spody_tdb_minus_tt(double et) {
+    double m = DELTET_M0 + DELTET_M1 * et;
+    double e = m + DELTET_EB * sin(m);
+    return DELTET_K * sin(e);
+}
+
 double spody_et_to_mjd_utc(double et) {
     /* TT2TAI_SEC = TAI - TT, so adding it walks TT -> TAI. The first
      * pass evaluates the step function at TAI (off by <=37 s from
      * UTC); the second pass re-evaluates at the estimated UTC, which
      * only matters within 37 s of a leap-second boundary. */
-    double mjd_tt  = (et / SECONDSxDAY) + (JD_J2000 - JD_MJD_EPOCH);
+    double tt_sec  = et - spody_tdb_minus_tt(et);
+    double mjd_tt  = (tt_sec / SECONDSxDAY) + (JD_J2000 - JD_MJD_EPOCH);
     double mjd_tai = mjd_tt + TT2TAI_SEC / SECONDSxDAY;
     double leap    = spody_tai_minus_utc(mjd_tai);
     double mjd_utc = mjd_tai - leap / SECONDSxDAY;

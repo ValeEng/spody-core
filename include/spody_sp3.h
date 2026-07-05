@@ -37,7 +37,8 @@
  *     realisations.
  *   - SP3 epochs are in GPS time. GPS time runs TAI - 19 s exactly
  *     (no leap seconds since the GPS epoch 1980-01-06), so TT = GPS +
- *     51.184 s and ET_TDB ~ TT (microsecond-level diff, negligible).
+ *     51.184 s; TT -> ET_TDB adds the deltet periodic term
+ *     (spody_tdb_minus_tt, +/-1.657 ms).
  *   - The output is a SpOdy SPDYOUT_ binary with state_dim=6: we keep
  *     the standard layout (t, x, y, z, vx, vy, vz) so the existing
  *     reader works without changes, but write vx=vy=vz=0 since SP3

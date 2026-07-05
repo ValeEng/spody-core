@@ -604,10 +604,10 @@ static void _build_Q(double X, double Y, double s, double Q[3][3]) {
 
 /* ET (TDB s past J2000) + dUT1 (s) -> JD_UT1.
  *
- * UTC comes from the full leap-second chain in spody_time.c (exact
- * at any post-1972 epoch, 37 s post-2017). TDB - TT is bounded by
- * ~2 ms over the EOP table's coverage and is folded into the ERA
- * fractional-day argument; ignored. */
+ * UTC comes from the full chain in spody_time.c: deltet (TDB -> TT)
+ * plus the leap-second step function (exact at any post-1972 epoch,
+ * 37 s post-2017). The +/-1.657 ms deltet term matters here: it
+ * enters the ERA argument at ~25 uas (~3 m at GPS radius). */
 static double _jd_ut1_from_et(double et, double dut1_sec) {
     double mjd_utc = spody_et_to_mjd_utc(et);
     return (mjd_utc + JD_MJD_EPOCH) + dut1_sec / SECONDSxDAY;

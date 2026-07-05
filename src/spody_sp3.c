@@ -117,10 +117,13 @@ static int _sp3_scan_file(FILE *fin,
                 continue;
             }
             /* SP3 epochs are GPST; TT = GPST + 51.184 s exactly, no
-             * leap-second table required (GPST2TT_SEC in spody_const.h). */
+             * leap-second table required (GPST2TT_SEC in
+             * spody_const.h); TT -> TDB adds the deltet periodic
+             * term (+/-1.657 ms). */
             double jd_gps = spody_greg_to_jd(yy, mm, dd, hh, mn, ss);
             double jd_tt  = jd_gps + GPST2TT_SEC / SECONDSxDAY;
-            cur_et        = ET_FROM_JD(jd_tt);
+            double tt_sec = ET_FROM_JD(jd_tt);
+            cur_et        = tt_sec + spody_tdb_minus_tt(tt_sec);
             have_epoch    = 1;
             continue;
         }

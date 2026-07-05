@@ -41,7 +41,8 @@
  * Time scale. GPS broadcast TOC is GPS time per RINEX 3.05 sect.
  * 6.10.1: TT = GPST + 51.184 s exactly (= GPS->TAI of 19 s plus
  * TAI->TT of 32.184 s). No leap-second table required, unlike
- * GLONASS UTC. TDB ~ TT (sub-ms diff, well below broadcast precision).
+ * GLONASS UTC. TT -> TDB adds the deltet periodic term
+ * (spody_tdb_minus_tt, +/-1.657 ms).
  *
  * Wire format we emit (must match spody/src/sim_run.c, spody_sp3.c
  * and spody_glonass.c):
