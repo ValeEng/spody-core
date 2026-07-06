@@ -132,6 +132,7 @@ set(SOURCES
     src/spody_math.c
     src/spody_mission.c
     src/spody_nrlmsise00.c
+    src/spody_oem.c
     src/spody_glonass.c
     src/spody_gps.c
     src/spody_solver.c

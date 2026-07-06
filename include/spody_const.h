@@ -148,6 +148,19 @@ extern "C" {
     // the planet's semi-major axis in AU and are added here as needed.
 #define EARTH_MOON_DISTANCE_KM 384400.0
 
+    // `spody calibrate` sliding-window density-scale fit (app-side
+    // subcommand; values centralised here per the all-constants-in-
+    // spody_const.h rule). The window default trades locality of the
+    // k(t) estimate against per-window drag signal; 24 h keeps a full
+    // day of in-track drift in each least-squares fit. Windows whose
+    // sample count falls below the minimum are folded into their
+    // predecessor. The delta-rms floor rejects fits where the drag
+    // on/off trajectories differ by less than ~1 mm rms in-track --
+    // there k is unobservable and the normal equation is noise.
+#define SPODY_CAL_WINDOW_DEFAULT_H    24.0    // fit-window length, hours
+#define SPODY_CAL_MIN_WINDOW_SAMPLES  6       // fewer -> fold into previous window
+#define SPODY_CAL_MIN_DELTA_RMS_KM    1.0e-6  // drag-signal rms floor (1 mm)
+
 #ifdef __cplusplus
 }
 #endif
