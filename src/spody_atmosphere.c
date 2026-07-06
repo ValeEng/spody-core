@@ -52,6 +52,7 @@
 #include <string.h>
 
 #include "spody_const.h"
+#include "spody_math.h"
 #include "spody_time.h"
 
 /* Gregorian YYYY-MM-DD -> MJD (UTC midnight) via the shared Meeus
@@ -346,4 +347,106 @@ double spody_space_weather_last_observed_mjd(const MappedSpaceWeatherData *msw) 
 double spody_space_weather_last_predicted_mjd(const MappedSpaceWeatherData *msw) {
     if (!msw) return NAN;
     return msw->mjd_last_predicted;
+}
+
+/* ============================================================
+ * Density calibration table (`mjd,k` node file)
+ * ============================================================ */
+
+int spody_setup_MappedDensityScale(MappedDensityScale *mds,
+                                   const char *filename) {
+    if (!mds || !filename) return -1;
+    memset(mds, 0, sizeof *mds);
+
+    FILE *fp = fopen(filename, "r");
+    if (!fp) {
+        fprintf(stderr, "spody_atmosphere: cannot open '%s': %s\n",
+                filename, strerror(errno));
+        return -1;
+    }
+
+    /* Two-pass like the space weather parser: count data lines,
+     * allocate exactly, then parse. Node files are tiny. */
+    char line[256];
+    size_t n = 0;
+    while (fgets(line, sizeof line, fp)) {
+        const char *p = line;
+        while (*p && isspace((unsigned char)*p)) ++p;
+        if (*p == '\0' || *p == '#') continue;
+        ++n;
+    }
+    if (n == 0) {
+        fprintf(stderr, "spody_atmosphere: no density-scale nodes in "
+                        "'%s'\n", filename);
+        fclose(fp);
+        return -1;
+    }
+
+    mds->mjd = calloc(n, sizeof *mds->mjd);
+    mds->k   = calloc(n, sizeof *mds->k);
+    if (!mds->mjd || !mds->k) {
+        spody_free_MappedDensityScale(mds);
+        fclose(fp);
+        return -1;
+    }
+
+    rewind(fp);
+    size_t i = 0;
+    size_t lineno = 0;
+    while (fgets(line, sizeof line, fp)) {
+        ++lineno;
+        char *p = line;
+        while (*p && isspace((unsigned char)*p)) ++p;
+        if (*p == '\0' || *p == '#') continue;
+
+        char *fields[4];
+        int nf = split_csv(p, fields, 4);
+        double mjd = 0.0, k = 0.0;
+        if (nf < 2 || !csv_to_double(fields[0], &mjd)
+                   || !csv_to_double(fields[1], &k)) {
+            fprintf(stderr, "spody_atmosphere: '%s' line %zu: expected "
+                            "'mjd,k'\n", filename, lineno);
+            goto fail;
+        }
+        if (!isfinite(k) || k <= 0.0) {
+            fprintf(stderr, "spody_atmosphere: '%s' line %zu: density "
+                            "scale must be positive and finite (got "
+                            "%g)\n", filename, lineno, k);
+            goto fail;
+        }
+        if (i > 0 && mjd <= mds->mjd[i - 1]) {
+            fprintf(stderr, "spody_atmosphere: '%s' line %zu: node "
+                            "epochs must be strictly ascending\n",
+                    filename, lineno);
+            goto fail;
+        }
+        mds->mjd[i] = mjd;
+        mds->k[i]   = k;
+        ++i;
+    }
+    fclose(fp);
+    mds->n = i;
+    return 0;
+
+fail:
+    fclose(fp);
+    spody_free_MappedDensityScale(mds);
+    return -1;
+}
+
+int spody_free_MappedDensityScale(MappedDensityScale *mds) {
+    if (!mds) return -1;
+    free(mds->mjd);
+    free(mds->k);
+    mds->mjd = NULL;
+    mds->k   = NULL;
+    mds->n   = 0;
+    return 0;
+}
+
+double spody_interpolate_density_scale(const MappedDensityScale *mds,
+                                       double et) {
+    if (!mds || mds->n == 0) return 1.0;
+    return spody_interp_linear(mds->mjd, mds->k, mds->n,
+                               spody_et_to_mjd_utc(et));
 }

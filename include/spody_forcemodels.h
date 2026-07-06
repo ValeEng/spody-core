@@ -201,6 +201,12 @@ struct ForceModelContext {
     MappedSpaceWeather *space_weather;
     double              body_spin_rad_s;
 
+    /* Optional density calibration k(t), multiplied onto the model
+     * density inside `spody_force_drag` (see MappedDensityScale in
+     * spody_atmosphere.h). NULL means k = 1 (uncalibrated model),
+     * the default for a zero-initialised context. */
+    const MappedDensityScale *density_scale;
+
     /* Time anchor: Ephemeris Time (seconds past J2000 TDB) at integrator
      * t = 0. The ephemeris query argument is simply
      *   et = et0 + t
@@ -289,9 +295,10 @@ void spody_force_srp(const Spacecraft *sat, double fraction_sunlight,
  *
  * Queries `ctx->atmosphere->density(...)` for rho at the satellite
  * position (mapped from ICRF to body-fixed via `ctx->get_bf_rotation`
- * so the density model sees coordinates in its native frame), and
- * builds omega_central_icrf as `body_spin_rad_s * (R_bf_to_icrf @
- * +z_bf)`.
+ * so the density model sees coordinates in its native frame), scales
+ * it by the optional calibration table `ctx->density_scale` (k = 1
+ * when NULL), and builds omega_central_icrf as `body_spin_rad_s *
+ * (R_bf_to_icrf @ +z_bf)`.
  *
  * Returns acc_out = {0,0,0} when ANY of (ctx->sat, ctx->atmosphere,
  * ctx->get_bf_rotation, ctx->body_spin_rad_s > 0) is missing, or

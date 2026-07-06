@@ -20,6 +20,7 @@
 extern "C" {
 #endif
 
+#include <stddef.h>
 #include <stdio.h>
 
 void spody_transpose_matrix(double in[3][3], double out[3][3]);
@@ -40,6 +41,20 @@ void spody_bf_to_geodetic(const double r_bf_km[3], double a_km,
                             double inv_f, double *lat_rad,
                             double *lon_rad, double *alt_km);
 
+/* Bracketing binary search over an ascending array xs[0..n-1]:
+ * returns i such that xs[i] <= x < xs[i+1], clamped to 0 when
+ * x < xs[0] and to n-2 when x >= xs[n-1], so i+1 is always a valid
+ * index. n must be >= 2. Shared primitive for every tabulated
+ * lookup (density-scale nodes, resampled trajectories, ...); the
+ * EOP / space weather parsers keep their own struct-array searches
+ * because their records interleave several channels per row. */
+size_t spody_bracket_index(const double *xs, size_t n, double x);
+
+/* Piecewise-linear interpolation over ascending nodes (xs, ys),
+ * clamped at both ends: x <= xs[0] returns ys[0], x >= xs[n-1]
+ * returns ys[n-1]. n >= 1; n == 1 returns ys[0] everywhere. */
+double spody_interp_linear(const double *xs, const double *ys,
+                           size_t n, double x);
 
 #ifdef __cplusplus
 }

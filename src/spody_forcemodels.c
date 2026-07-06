@@ -180,6 +180,7 @@ void spody_force_drag(const ForceModelContext *ctx, double et,
     double rho_kg_m3 = 0.0;
     if (ctx->atmosphere->density(ctx, et, r_bf, &rho_kg_m3) != 0) return;
     if (!(rho_kg_m3 > 0.0)) return;
+    rho_kg_m3 *= spody_interpolate_density_scale(ctx->density_scale, et);
 
     /* omega vector in ICRF = body's BF +Z rotated into ICRF, scaled. */
     double omega[3];

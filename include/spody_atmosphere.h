@@ -193,6 +193,54 @@ double spody_space_weather_last_observed_mjd(const MappedSpaceWeatherData *msw);
  * the user to update the file. */
 double spody_space_weather_last_predicted_mjd(const MappedSpaceWeatherData *msw);
 
+/* Time-varying density calibration table.
+ *
+ * Empirical thermosphere models carry a slowly-drifting bias against
+ * orbit-derived density references (NRLMSISE-00 measured at +20..+40%
+ * around 450-500 km near the 2024 solar maximum, drifting by tens of
+ * percent over days). The engine therefore accepts a multiplicative
+ * correction k(t) applied to the model density inside
+ * `spody_force_drag`:
+ *
+ *   rho_used = k(et) * rho_model
+ *
+ * following the standard calibrated-atmosphere approach (empirical
+ * model provides the shape, external data provide the amplitude).
+ * The table is a plain text file, one `mjd,k` pair per line
+ * (`#` starts a comment line):
+ *
+ *   # nodes fitted against ESA Swarm-A POD, window 24 h
+ *   60494.0, 1.31
+ *   60495.0, 1.35
+ *
+ * Node epochs are UTC MJD, strictly ascending; k must be positive
+ * and finite. Between nodes the factor is linearly interpolated;
+ * outside the node span it clamps to the nearest end value. A
+ * single-node table is the constant-factor case (the app emits one
+ * for the scalar `density_scale` TOML key). A NULL table on the
+ * context means k = 1 (no correction). */
+typedef struct {
+    double *mjd;   /* node epochs, UTC MJD, strictly ascending */
+    double *k;     /* multiplicative density factors, > 0      */
+    size_t  n;
+} MappedDensityScale;
+
+/* Parse a `mjd,k` node file into *mds (heap-allocates the arrays;
+ * caller must spody_free_MappedDensityScale). Rejects empty tables,
+ * non-ascending epochs and non-positive / non-finite factors.
+ * Returns 0 on success, -1 on parse / IO failure. */
+int spody_setup_MappedDensityScale(MappedDensityScale *mds,
+                                   const char *filename);
+
+/* Release the node arrays. Safe on a zero-initialised struct. */
+int spody_free_MappedDensityScale(MappedDensityScale *mds);
+
+/* k at Ephemeris Time `et` (linear between nodes, clamped outside).
+ * Returns 1.0 on a NULL / empty table so call sites can apply it
+ * unconditionally. */
+double spody_interpolate_density_scale(const MappedDensityScale *mds,
+                                       double et);
+
 /* Atmosphere density callback. Returns mass density at the satellite
  * position in kg/m^3.
  *
