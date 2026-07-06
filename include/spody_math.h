@@ -27,6 +27,12 @@ void spody_transpose_matrix(double in[3][3], double out[3][3]);
 void spody_getrotmatrix_XZX(double alpha, double beta, double gamma, double R[3][3]);
 void spody_rotate_vector(const double C[3][3], const double v_in[3], double v_out[3]);
 
+/* 3-vector dot and cross products. Shared primitives for frame /
+ * basis construction (e.g. the RIC triad in trajectory-diff tooling);
+ * out must not alias a or b in spody_cross3. */
+double spody_dot3(const double a[3], const double b[3]);
+void   spody_cross3(const double a[3], const double b[3], double out[3]);
+
 /* Body-fixed cartesian -> geodetic coordinates on the oblate
  * ellipsoid (semi-major axis a_km, inverse flattening inv_f; pass
  * WGS84_A_KM / WGS84_INV_F from spody_const.h for Earth). Bowring's
