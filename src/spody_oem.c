@@ -194,19 +194,25 @@ static int oem_scan_file(FILE *fin,
             return 1;
         }
 
-        /* Epoch -> ET (s past J2000 TDB). UTC needs the leap-second
+        /* Epoch -> ET (s past J2000 TDB). The date's midnight JD is
+         * exact in double and (jd0 - JD_J2000) is a small half-integer,
+         * so building seconds-past-J2000 as day-difference * 86400 +
+         * seconds-of-day preserves the full resolution of the text
+         * field (a full-magnitude JD would quantise epochs at ~40 us,
+         * i.e. ~30 cm along a LEO track). UTC needs the leap-second
          * chain UTC -> TAI -> TT plus the TDB periodic term; TDB is
          * ET by definition. */
-        double jd = spody_greg_to_jd(y, mo, d, hh, mn, ss);
+        double jd0      = spody_greg_to_jd(y, mo, d, 0, 0, 0.0);
+        double base_sec = (jd0 - JD_J2000) * SECONDSxDAY
+                        + hh * 3600.0 + mn * 60.0 + ss;
         double et;
         if (time_system == OEM_TS_UTC) {
-            double mjd_utc = jd - JD_MJD_EPOCH;
-            double tt_sec  = ET_FROM_JD(jd)
-                           + spody_tai_minus_utc(mjd_utc)
-                           - TT2TAI_SEC;
+            double tt_sec = base_sec
+                          + spody_tai_minus_utc(jd0 - JD_MJD_EPOCH)
+                          - TT2TAI_SEC;
             et = tt_sec + spody_tdb_minus_tt(tt_sec);
         } else {
-            et = ET_FROM_JD(jd);
+            et = base_sec;
         }
 
         /* Overlap / duplicate guard: consecutive daily OEM releases
