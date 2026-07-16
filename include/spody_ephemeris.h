@@ -117,6 +117,8 @@ typedef struct {
  * MappedEphemerisData plus a private single-shot cache keyed by DE440
  * body index. If the same (idx, et) is requested again on the same
  * handle, the cached position is returned without re-evaluating Chebyshev.
+ * Velocity queries fill cache_vel too; position-only queries leave the
+ * velocity slot invalid (cache_vel_valid tracks it separately).
  *
  * Threading model:
  *   - Setup the MappedEphemerisData once (e.g. on the main thread).
@@ -127,7 +129,9 @@ typedef struct {
     const MappedEphemerisData *med;
     double cache_jd[EPH_CACHE_SLOTS];
     double cache_pos[EPH_CACHE_SLOTS][3];
+    double cache_vel[EPH_CACHE_SLOTS][3];
     int cache_valid[EPH_CACHE_SLOTS];
+    int cache_vel_valid[EPH_CACHE_SLOTS];
 } MappedEphemeris;
 
 int spody_createfile_MappedEphemerisData(const char *path, const char **file_names, const int n_files, const char *de);
@@ -140,6 +144,16 @@ int spody_free_MappedEphemerisData(MappedEphemerisData *med);
 /* Time argument: et = seconds past J2000 (TDB), the SPICE Ephemeris Time
  * convention. Convert from a Julian Date with ET_FROM_JD(jd). */
 int spody_get_ephposition(MappedEphemeris *map, int central_idx, int target_idx, double et, double result[3]);
+/* Velocity of target relative to central at et, ICRF km/s. Exact: the
+ * analytic derivative of the position Chebyshev series (no finite
+ * differences, no extra data). Returns 0 on success, -1 on unsupported
+ * body ids. */
+int spody_get_ephvelocity(MappedEphemeris *map, int central_idx, int target_idx, double et, double result[3]);
+/* Full state [x,y,z,vx,vy,vz] of target relative to central at et,
+ * ICRF km and km/s. The position half is bit-identical to
+ * spody_get_ephposition; the velocity half to spody_get_ephvelocity.
+ * Returns 0 on success, -1 on unsupported body ids. */
+int spody_get_ephstate(MappedEphemeris *map, int central_idx, int target_idx, double et, double result[6]);
 /* Batch query: writes n_targets positions into a flat buffer of 3*n_targets
  * doubles, laid out as [x0,y0,z0, x1,y1,z1, ...]. Caller owns the buffer. */
 int spody_get_ephposition_batch(MappedEphemeris *map, int central_idx, const int *target_idx_array, int n_targets, double et, double *result);

@@ -310,32 +310,77 @@ static double chebyshev_evaluate(double time_scaled, const double *coefficients,
 
     // final result --> c_0 + x * v_0 - v_1.
     // in the loop, v_k ---> v_0 | v_kp1 ---> v_1.
-    // return is for k=0 ---> c_0 + x*v_0 - v_1  
+    // return is for k=0 ---> c_0 + x*v_0 - v_1
     // that is the standard formula for c_0 + x*v_k - v_{k+1}, k=0.
     return coefficients[0] + (x * v_k) - v_kp1;
 }
 
 /**
- * Compute the position (X, Y, Z) of a celestial body at a given time.
+ * Evaluate the derivative of a Chebyshev polynomial at a given point.
  *
- * @param target_idx Index of the celestial body (0=Mercury, 1=Venus, ...) respect to @param ef.
+ * Uses T'_k = k * U_{k-1}: the derivative of sum c_k T_k(x) is the
+ * second-kind series sum_{k>=1} k c_k U_{k-1}(x), evaluated with the
+ * same backward Clenshaw scheme as chebyshev_evaluate (for the U
+ * recurrence the result is simply b_0, since U_1 = 2x U_0).
+ *
+ * @param time_scaled Normalized and scaled time in the range [-1.0, 1.0].
+ * @param coefficients Array of Chebyshev coefficients (same series as
+ *                     chebyshev_evaluate; the caller rescales by
+ *                     d(tau)/dt to get a physical rate).
+ * @param n_coeffs Number of coefficients (polynomial order).
+ * @return d/d(time_scaled) of the polynomial at time_scaled.
+ */
+static double chebyshev_evaluate_derivative(double time_scaled, const double *coefficients, int n_coeffs) {
+    if (n_coeffs <= 1) return 0.0;
+
+    double x = time_scaled;
+    double two_x = 2.0 * x;
+
+    double b_kp1 = 0.0; // b_{k+1}
+    double b_k   = 0.0; // b_k
+    double b_km1;       // b_{k-1}
+
+    // backward sum over the U-series terms d_k = (k+1) * c_{k+1}
+    for (int k = n_coeffs - 2; k >= 0; k--) {
+        // b_{k-1 slot} = d_k + 2x * b_k - b_{k+1}
+        b_km1 = ((double)(k + 1) * coefficients[k + 1]) + (two_x * b_k) - b_kp1;
+        b_kp1 = b_k;
+        b_k = b_km1;
+    }
+
+    // after the k = 0 iteration b_k holds b_0 = sum d_k U_k(x)
+    return b_k;
+}
+
+/**
+ * Compute the position (X, Y, Z) -- and optionally the velocity
+ * (VX, VY, VZ) -- of a celestial body at a given time.
+ *
+ * @param map Per-thread query handle (shared data + cache).
+ * @param target_idx Index of the celestial body (0=Mercury, 1=Venus, ...) inside the DE440 record.
  * @param et Target Ephemeris Time (seconds past J2000 TDB).
- * @param ef Ephemeris JPL file structure (from ASCII Header).
- * @param coeffs Array of coefficients from the ASCP file.
- * @param t_start Julian Date at the start of the current block.
- * @param t_end Julian Date at the end of the current block.
- * @param result Output array for the position [X, Y, Z].
+ * @param pos Output array for the position [X, Y, Z] (km).
+ * @param vel Output array for the velocity [VX, VY, VZ] (km/s), or NULL
+ *            to skip the Chebyshev-derivative evaluation entirely.
  * @return 1 if successful, 0 if the date is out of range or data is invalid.
  */
 
-static int calculate_body_position(MappedEphemeris *map, int target_idx, double et, double result[3]) {
+static int calculate_body_posvel(MappedEphemeris *map, int target_idx, double et, double pos[3], double vel[3]) {
 
-    // cache hit: same body, same epoch -> skip record/set lookup and Chebyshev
+    // cache hit: same body, same epoch -> skip record/set lookup and Chebyshev.
+    // A velocity request also needs cache_vel_valid: position-only queries
+    // leave the velocity slot stale.
     if (target_idx >= 0 && target_idx < EPH_CACHE_SLOTS &&
-        map->cache_valid[target_idx] && map->cache_jd[target_idx] == et) {
-        result[0] = map->cache_pos[target_idx][0];
-        result[1] = map->cache_pos[target_idx][1];
-        result[2] = map->cache_pos[target_idx][2];
+        map->cache_valid[target_idx] && map->cache_jd[target_idx] == et &&
+        (vel == NULL || map->cache_vel_valid[target_idx])) {
+        pos[0] = map->cache_pos[target_idx][0];
+        pos[1] = map->cache_pos[target_idx][1];
+        pos[2] = map->cache_pos[target_idx][2];
+        if (vel != NULL) {
+            vel[0] = map->cache_vel[target_idx][0];
+            vel[1] = map->cache_vel[target_idx][1];
+            vel[2] = map->cache_vel[target_idx][2];
+        }
         return 1;
     }
 
@@ -378,22 +423,40 @@ static int calculate_body_position(MappedEphemeris *map, int target_idx, double 
     int set_length = n_components * numeber_coefficients_per_component;
     int offset = start_index + (set_id * set_length);
 
-    // 5. Polynomial evaluation for X, Y, Z
+    // 5. Polynomial evaluation for X, Y, Z (and their rates on request).
+    //    The series runs over tau, so the physical rate is the tau-
+    //    derivative rescaled by d(tau)/dt = 2 / set_duration -> km/s.
+    double dtau_dt = 2.0 / set_duration;
     for (int i = 0; i < n_components; i++) {
         const double *coeff_ptr = eprec->record + offset + (i * numeber_coefficients_per_component);
-        result[i] = chebyshev_evaluate(tau, coeff_ptr, numeber_coefficients_per_component);
+        pos[i] = chebyshev_evaluate(tau, coeff_ptr, numeber_coefficients_per_component);
+        if (vel != NULL) {
+            vel[i] = chebyshev_evaluate_derivative(tau, coeff_ptr, numeber_coefficients_per_component) * dtau_dt;
+        }
     }
 
     // store in cache (cache_jd field is now keyed by ET, name kept for layout stability)
     if (target_idx >= 0 && target_idx < EPH_CACHE_SLOTS) {
         map->cache_jd[target_idx] = et;
-        map->cache_pos[target_idx][0] = result[0];
-        map->cache_pos[target_idx][1] = result[1];
-        map->cache_pos[target_idx][2] = result[2];
+        map->cache_pos[target_idx][0] = pos[0];
+        map->cache_pos[target_idx][1] = pos[1];
+        map->cache_pos[target_idx][2] = pos[2];
         map->cache_valid[target_idx] = 1;
+        if (vel != NULL) {
+            map->cache_vel[target_idx][0] = vel[0];
+            map->cache_vel[target_idx][1] = vel[1];
+            map->cache_vel[target_idx][2] = vel[2];
+            map->cache_vel_valid[target_idx] = 1;
+        } else {
+            map->cache_vel_valid[target_idx] = 0;
+        }
     }
 
     return 1;
+}
+
+static int calculate_body_position(MappedEphemeris *map, int target_idx, double et, double result[3]) {
+    return calculate_body_posvel(map, target_idx, et, result, NULL);
 }
 
 //MAPPING FUNCTIONS--------------------------------------------------------------------------------------------------
@@ -624,14 +687,20 @@ int spody_setup_MappedEphemerisData(MappedEphemerisData *med, const char *filena
 int spody_setup_MappedEphemeris(MappedEphemeris *map, const MappedEphemerisData *med){
     if (!map || !med) return -1;
     map->med = med;
-    for (int i = 0; i < EPH_CACHE_SLOTS; i++) map->cache_valid[i] = 0;
+    for (int i = 0; i < EPH_CACHE_SLOTS; i++) {
+        map->cache_valid[i] = 0;
+        map->cache_vel_valid[i] = 0;
+    }
     return 0;
 }
 
 int spody_free_MappedEphemeris(MappedEphemeris *map){
     if (!map) return -1;
     map->med = NULL;
-    for (int i = 0; i < EPH_CACHE_SLOTS; i++) map->cache_valid[i] = 0;
+    for (int i = 0; i < EPH_CACHE_SLOTS; i++) {
+        map->cache_valid[i] = 0;
+        map->cache_vel_valid[i] = 0;
+    }
     return 0;
 }
 
@@ -699,6 +768,56 @@ static int get_body_position_ssb(MappedEphemeris *map, int naif_id, double et, d
     }
 }
 
+static int get_body_state_ssb(MappedEphemeris *map, int naif_id, double et, double pos[3], double vel[3]){
+    double tpos[3], tvel[3];
+    switch (naif_id) {
+    case 0:
+        pos[0] = 0.0; pos[1] = 0.0; pos[2] = 0.0;
+        vel[0] = 0.0; vel[1] = 0.0; vel[2] = 0.0;
+        return 0;
+    case 1: case 199: return calculate_body_posvel(map, 0,  et, pos, vel);
+    case 2: case 299: return calculate_body_posvel(map, 1,  et, pos, vel);
+    case 3:           return calculate_body_posvel(map, 2,  et, pos, vel);
+    case 4: case 499: return calculate_body_posvel(map, 3,  et, pos, vel);
+    case 5: case 599: return calculate_body_posvel(map, 4,  et, pos, vel);
+    case 6: case 699: return calculate_body_posvel(map, 5,  et, pos, vel);
+    case 7: case 799: return calculate_body_posvel(map, 6,  et, pos, vel);
+    case 8: case 899: return calculate_body_posvel(map, 7,  et, pos, vel);
+    case 9: case 999: return calculate_body_posvel(map, 8,  et, pos, vel);
+    case 10:          return calculate_body_posvel(map, 10, et, pos, vel);
+    case 399: {
+        // Earth_ssb = EMB_ssb - 1/(1+EMRAT) * r_moon_earth (same split for v)
+        calculate_body_posvel(map, 2, et, pos, vel);
+        calculate_body_posvel(map, 9, et, tpos, tvel);
+        double f = -1.0 / (1.0 + EMRAT);
+        pos[0] += f * tpos[0];
+        pos[1] += f * tpos[1];
+        pos[2] += f * tpos[2];
+        vel[0] += f * tvel[0];
+        vel[1] += f * tvel[1];
+        vel[2] += f * tvel[2];
+        return 1;
+    }
+    case 301: {
+        // Moon_ssb = EMB_ssb + EMRAT/(1+EMRAT) * r_moon_earth (same split for v)
+        calculate_body_posvel(map, 2, et, pos, vel);
+        calculate_body_posvel(map, 9, et, tpos, tvel);
+        double f = EMRAT / (1.0 + EMRAT);
+        pos[0] += f * tpos[0];
+        pos[1] += f * tpos[1];
+        pos[2] += f * tpos[2];
+        vel[0] += f * tvel[0];
+        vel[1] += f * tvel[1];
+        vel[2] += f * tvel[2];
+        return 1;
+    }
+    default:
+        pos[0] = 0.0; pos[1] = 0.0; pos[2] = 0.0;
+        vel[0] = 0.0; vel[1] = 0.0; vel[2] = 0.0;
+        return -1;
+    }
+}
+
 int spody_get_ephposition(MappedEphemeris *map, int central_idx, int target_idx, double et, double result[3]){
 
     // fast path: Earth <-> Moon uses a single Chebyshev evaluation
@@ -727,6 +846,48 @@ int spody_get_ephposition(MappedEphemeris *map, int central_idx, int target_idx,
     result[1] -= central[1];
     result[2] -= central[2];
     return 0;
+}
+
+int spody_get_ephstate(MappedEphemeris *map, int central_idx, int target_idx, double et, double result[6]){
+
+    double *pos = result;
+    double *vel = result + 3;
+
+    // fast path: Earth <-> Moon uses a single Chebyshev evaluation
+    if (central_idx == 399 && target_idx == 301) {
+        calculate_body_posvel(map, 9, et, pos, vel);
+        return 0;
+    }
+    if (central_idx == 301 && target_idx == 399) {
+        calculate_body_posvel(map, 9, et, pos, vel);
+        pos[0] = -pos[0]; pos[1] = -pos[1]; pos[2] = -pos[2];
+        vel[0] = -vel[0]; vel[1] = -vel[1]; vel[2] = -vel[2];
+        return 0;
+    }
+
+    double cpos[3], cvel[3];
+    if (get_body_state_ssb(map, target_idx, et, pos, vel) < 0) {
+        printf("Target body not supported\n");
+        return -1;
+    }
+    if (get_body_state_ssb(map, central_idx, et, cpos, cvel) < 0) {
+        printf("Central body not supported\n");
+        for (int i = 0; i < 6; i++) result[i] = 0.0;
+        return -1;
+    }
+    pos[0] -= cpos[0]; pos[1] -= cpos[1]; pos[2] -= cpos[2];
+    vel[0] -= cvel[0]; vel[1] -= cvel[1]; vel[2] -= cvel[2];
+    return 0;
+}
+
+int spody_get_ephvelocity(MappedEphemeris *map, int central_idx, int target_idx, double et, double result[3]){
+
+    double state[6];
+    int rc = spody_get_ephstate(map, central_idx, target_idx, et, state);
+    result[0] = state[3];
+    result[1] = state[4];
+    result[2] = state[5];
+    return rc;
 }
 
 int spody_get_ephposition_batch(MappedEphemeris *map, int central_idx, const int *target_idx_array, int n_targets, double et, double *result){
