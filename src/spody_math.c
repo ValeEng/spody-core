@@ -108,27 +108,6 @@ void spody_bf_to_geodetic(const double r_bf_km[3], double a_km,
         }
     }
 }
-size_t spody_bracket_index(const double *xs, size_t n, double x) {
-    if (x <= xs[0]) return 0;
-    if (x >= xs[n - 1]) return n - 2;
-    size_t lo = 0, hi = n - 1;
-    while (hi - lo > 1) {
-        size_t mid = lo + (hi - lo) / 2;
-        if (xs[mid] <= x) lo = mid;
-        else hi = mid;
-    }
-    return lo;
-}
-
-double spody_interp_linear(const double *xs, const double *ys,
-                           size_t n, double x) {
-    if (n == 1 || x <= xs[0]) return ys[0];
-    if (x >= xs[n - 1]) return ys[n - 1];
-    size_t i = spody_bracket_index(xs, n, x);
-    double t = (x - xs[i]) / (xs[i + 1] - xs[i]);
-    return ys[i] + t * (ys[i + 1] - ys[i]);
-}
-
 double spody_dot3(const double a[3], const double b[3]) {
     return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 }

@@ -17,18 +17,16 @@
  * Interpolation primitives.
  *
  * Pure-math routines, no dependency on integrator state or any other
- * spody-core module. Useful both for integrator dense output between
- * accepted steps and for resampling tabulated trajectories.
+ * spody-core module. THE home of everything that evaluates tabulated
+ * data: the bracketing lookup, piecewise-linear nodes, cubic Hermite
+ * dense output. Future additions (cubic spline, Lagrange, B-spline --
+ * e.g. for an SPK Type 9/13 reader) should live in this same header.
  *
- * v1 implements cubic Hermite (C^1, exact reconstruction of polynomials
- * up to degree 3 given matching endpoint values and derivatives).
- * Future additions (cubic spline, Lagrange, B-spline) should live in
- * this same header next to the Hermite API.
- *
- * All functions clamp the parameter s = (t - t_a) / (t_b - t_a) into
- * [0, 1], so a query slightly outside [t_a, t_b] (e.g. due to floating
- * point rounding on a grid edge) returns the endpoint value rather than
- * extrapolating wildly.
+ * The Hermite functions clamp the parameter s = (t - t_a) / (t_b - t_a)
+ * into [0, 1], so a query slightly outside [t_a, t_b] (e.g. due to
+ * floating point rounding on a grid edge) returns the endpoint value
+ * rather than extrapolating wildly; the tabulated lookups clamp to the
+ * first/last node the same way.
  */
 #ifndef SPODY_INTERP_H
 #define SPODY_INTERP_H
@@ -36,6 +34,23 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+#include <stddef.h>
+
+/* Bracketing binary search over an ascending array xs[0..n-1]:
+ * returns i such that xs[i] <= x < xs[i+1], clamped to 0 when
+ * x < xs[0] and to n-2 when x >= xs[n-1], so i+1 is always a valid
+ * index. n must be >= 2. Shared primitive for every tabulated
+ * lookup (density-scale nodes, resampled trajectories, ...); the
+ * EOP / space weather parsers keep their own struct-array searches
+ * because their records interleave several channels per row. */
+size_t spody_bracket_index(const double *xs, size_t n, double x);
+
+/* Piecewise-linear interpolation over ascending nodes (xs, ys),
+ * clamped at both ends: x <= xs[0] returns ys[0], x >= xs[n-1]
+ * returns ys[n-1]. n >= 1; n == 1 returns ys[0] everywhere. */
+double spody_interp_linear(const double *xs, const double *ys,
+                           size_t n, double x);
 
 /* Scalar cubic Hermite. Returns the C^1 cubic at t that matches
  *   y(t_a) = y_a,   y'(t_a) = dy_a,
