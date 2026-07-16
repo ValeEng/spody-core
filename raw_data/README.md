@@ -18,7 +18,7 @@ raw_data/
 
 ## DE440 — JPL Planetary Ephemeris
 
-Used by: `spody_ephemeris` module (`spody_setup_MappedEphemerisData`, `spody_setup_MappedEphemeris`, `spody_get_ephposition`, `spody_get_lunarlibrationangles`)
+Used by: `spody_ephemeris` module (`spody_setup_MappedEphemerisData`, `spody_setup_MappedEphemeris`, `spody_get_ephposition`, `spody_get_ephvelocity`, `spody_get_ephstate`, `spody_get_lunarlibrationangles`)
 
 ### 1. Download the ASCII files
 
@@ -88,6 +88,12 @@ spody_setup_MappedEphemeris(&map, &med);
 double position[3];
 spody_get_ephposition(&map, 399, 301, et, position);
 
+// Velocity (km/s) and full state [x,y,z,vx,vy,vz] come from the analytic
+// derivative of the same Chebyshev series -- exact, no finite differences.
+double velocity[3], state[6];
+spody_get_ephvelocity(&map, 399, 301, et, velocity);
+spody_get_ephstate(&map, 399, 301, et, state);
+
 // Free in reverse order when done
 spody_free_MappedEphemeris(&map);
 spody_free_MappedEphemerisData(&med);
@@ -97,7 +103,7 @@ spody_free_MappedEphemerisData(&med);
 
 **Body index reference (JPL NAIF standard):**
 
-DE440 stores positions relative to the **Solar System Barycenter (SSB)**, plus the Moon relative to Earth-Moon Barycenter (EMB). `spody_get_ephposition(map, observer, target, et, r)` returns the position of `target` as seen from `observer`, handling the EMB/EMRAT bookkeeping internally.
+DE440 stores positions relative to the **Solar System Barycenter (SSB)**, plus the Moon relative to Earth-Moon Barycenter (EMB). `spody_get_ephposition(map, observer, target, et, r)` returns the position of `target` as seen from `observer`, handling the EMB/EMRAT bookkeeping internally; `spody_get_ephvelocity` / `spody_get_ephstate` apply the same bookkeeping to the km/s rates.
 
 | NAIF ID | Body |
 |:-:|---|

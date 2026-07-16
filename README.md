@@ -246,7 +246,11 @@ MappedEphemeris map = {0};                     // one per thread
 spody_setup_MappedEphemeris(&map, &med);
 
 double r[3];
-spody_get_ephposition(&map, /*central=*/399, /*target=*/301, jd, r);  // Earth -> Moon
+spody_get_ephposition(&map, /*central=*/399, /*target=*/301, et, r);  // Earth -> Moon, km
+
+double v[3], s[6];
+spody_get_ephvelocity(&map, 399, 301, et, v);  // km/s, analytic Chebyshev derivative
+spody_get_ephstate(&map, 399, 301, et, s);     // [x,y,z,vx,vy,vz]
 
 spody_free_MappedEphemeris(&map);
 spody_free_MappedEphemerisData(&med);
