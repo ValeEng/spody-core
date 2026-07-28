@@ -130,6 +130,12 @@ extern "C" {
 #define NEPTUNE_RADIUS 24764.0
 #define PLUTO_RADIUS   1195.0
 
+    // NAIF id of the Sun. Spelled out here rather than inline because
+    // two unrelated places special-case it: the SRP source direction
+    // (ephemeris target) and the SRP occulter list, which must never
+    // contain the light source itself.
+#define SUN_NAIF 10
+
     // WGS-84 reference ellipsoid (NGA.STND.0036). Used for the
     // ECEF -> geodetic conversion feeding the Earth atmosphere model
     // (NRLMSISE-00 takes geodetic latitude/altitude). Distinct from

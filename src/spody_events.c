@@ -17,11 +17,8 @@
 #include <string.h>
 #include "spody_events.h"
 #include "spody_solver.h"
-#include "spody_eclipse.h"   /* spody_get_sateclipsestatus */
-#include "spody_const.h"     /* SUN_RADIUS                  */
-
-/* NAIF id of the Sun in DE440 (centre of mass). */
-#define SPODY_SUN_NAIF_ID 10
+#include "spody_eclipse.h"   /* spody_get_satlitfraction     */
+#include "spody_const.h"     /* SUN_RADIUS, SUN_NAIF         */
 
 SpodyEvent spody_event_impact(int naif_id, double radius_km, spody_event_action action) {
     SpodyEvent ev;
@@ -139,13 +136,13 @@ static double body_distance2(const SpodyEvent *ev,
 }
 
 /* Sun-lit fraction at state (t, y) given the event's occulting body.
- * Wraps spody_get_sateclipsestatus by setting up the three central-frame
- * vectors the math wants:
- *   occulting2sat -- from occulter to satellite
- *   occulting2sun -- from occulter to Sun
- *   sat2sun       -- from satellite to Sun
- * The Sun is queried from the ephemeris in the central frame (NAIF 10).
- * If the occulter is the central body the offset is zero. */
+ * Wraps spody_get_satlitfraction with a one-body occulter list: an
+ * eclipse event is deliberately per-occulter ("eclipsed by the Moon"
+ * and "eclipsed by the Earth" are two different events with their own
+ * threshold), unlike the SRP force, which combines every occulter
+ * into one lit fraction. The Sun is queried from the ephemeris in the
+ * central frame; if the occulter is the central body its offset is
+ * zero. */
 static double eclipse_fraction(const SpodyEvent *ev,
                                const ForceModelContext *ctx,
                                double t, const double *y)
@@ -159,17 +156,16 @@ static double eclipse_fraction(const SpodyEvent *ev,
                               et, occ_pos_central);
     }
     double sun_pos_central[3] = { 0.0, 0.0, 0.0 };
-    spody_get_ephposition(ctx->eph, ctx->naif_central, SPODY_SUN_NAIF_ID,
+    spody_get_ephposition(ctx->eph, ctx->naif_central, SUN_NAIF,
                           et, sun_pos_central);
 
-    double occulting2sat[3], occulting2sun[3], sat2sun[3];
+    double sat2occ[1][3], sat2sun[3];
     for (int i = 0; i < 3; i++) {
-        occulting2sat[i] = y[i]              - occ_pos_central[i];
-        occulting2sun[i] = sun_pos_central[i] - occ_pos_central[i];
-        sat2sun[i]       = sun_pos_central[i] - y[i];
+        sat2occ[0][i] = occ_pos_central[i]  - y[i];
+        sat2sun[i]    = sun_pos_central[i]  - y[i];
     }
-    return spody_get_sateclipsestatus(occulting2sat, occulting2sun, sat2sun,
-                                      SUN_RADIUS, ev->radius_km);
+    double radius = ev->radius_km;
+    return spody_get_satlitfraction(sat2sun, SUN_RADIUS, sat2occ, &radius, 1);
 }
 
 int spody_event_check(SpodyEvent *ev,

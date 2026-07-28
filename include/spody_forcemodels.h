@@ -48,6 +48,13 @@ typedef struct ForceModelContext ForceModelContext;
  * itself trivially copyable / serializable. Real missions rarely exceed 3-5. */
 #define SPODY_FM_MAX_THIRD 8
 
+/* The SRP occulter list is "central body + third bodies", so the
+ * eclipse machinery must be able to take one more body than the
+ * third-body cap. */
+#if SPODY_FM_MAX_THIRD + 1 > SPODY_ECL_MAX_OCCULTERS
+#error "SPODY_ECL_MAX_OCCULTERS too small for SPODY_FM_MAX_THIRD + 1"
+#endif
+
 /* ============================================================
  * Spacecraft parameters
  * ============================================================
@@ -171,11 +178,24 @@ struct ForceModelContext {
     const double *third_mu;      /* km^3/s^2 per body */
     int           n_third;
 
-    /* solar radiation pressure (cannonball + cylindrical eclipse) */
+    /* Solar radiation pressure (cannonball) with a multi-occulter
+     * eclipse. The occulter list is application policy -- typically
+     * the central body plus every third body, never the Sun itself --
+     * and is built once, before the run: it is epoch-independent, so
+     * the RHS never rebuilds it. The force combines the whole list
+     * into a single lit fraction (see spody_get_satlitfraction), so
+     * the Earth shadowing a lunar orbiter and the Moon transiting the
+     * Sun for an Earth orbiter both land in the acceleration.
+     *
+     * srp_n_occulters == 0 disables shadow modelling: the satellite
+     * is then lit at all times. Entries with radius <= 0 are ignored
+     * individually, which is how a run can keep a body in the list
+     * without letting it cast a shadow. */
     int     enable_srp;
-    int     srp_occulter_naif;       /* body that can shadow the sat */
-    double  srp_occulter_radius;     /* km                           */
-    double  sun_radius;              /* km                           */
+    int     srp_n_occulters;
+    int     srp_occulter_naif  [SPODY_ECL_MAX_OCCULTERS];
+    double  srp_occulter_radius[SPODY_ECL_MAX_OCCULTERS];  /* km */
+    double  sun_radius;                                    /* km */
 
     /* atmospheric drag.
      *

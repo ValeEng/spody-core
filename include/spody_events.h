@@ -94,8 +94,12 @@ typedef enum {
  *     1.0 -> any loss of sunlight (penumbra entry)
  *     0.5 -> middle of penumbra (default in spody CLI)
  *     0.0 -> full umbra entry
- *   The fraction is computed by spody_get_sateclipsestatus (Montenbruck
- *   & Gill); the Sun position is always queried from the ephemeris.
+ *   The fraction is computed by spody_get_satlitfraction (Montenbruck
+ *   & Gill) against THIS event's occulter alone -- one event per
+ *   occulting body, unlike the SRP force, which combines every
+ *   occulter into a single lit fraction. During a double eclipse the
+ *   two therefore disagree on purpose. The Sun position is always
+ *   queried from the ephemeris.
  *   At trigger the runtime writes the fraction at trigger into
  *   distance_at_trigger (semantic slot reuse).
  *

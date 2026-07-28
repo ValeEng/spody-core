@@ -16,7 +16,7 @@
 The library provides a clean, modular API covering the core pillars of orbital mechanics:
 
 - 🌍 **Ephemeris parsing** — JPL DE binary, ET seconds past J2000 with `SPDYEPET` magic header
-- 🌑 **Eclipse detection** — Conical shadow with umbra / penumbra / anteumbra (Montenbruck-Gill, finite Sun + occulter)
+- 🌑 **Eclipse detection** — Conical shadow with umbra / penumbra / anteumbra (Montenbruck-Gill, finite Sun + occulter), **multi-occulter**: overlapping shadows combined by inclusion-exclusion
 - 🌐 **Spherical harmonics gravity** — High-fidelity lunar gravity with Pines/Lundberg-Schutz recurrence (stable up to N≥1000)
 - 🚀 **Numerical integrators** — Adaptive Dormand-Prince 5(4) "7S" stability-optimal pair, classical RK4
 - 🛰 **Force models** — Composite RHS with two-body + harmonics + third bodies + SRP (cannonball, conical eclipse)
@@ -34,10 +34,10 @@ single dataset can drive many concurrent propagations without contention.
 | Module | Description |
 |---|---|
 | `ephemeris` | Parses and queries JPL planetary ephemerides (e.g. DE440). On-disk format is `SPDYEPET` (ET seconds past J2000, ~250× more precision than legacy JD-days). Memory-mapped with thread-safe handle/data split. |
-| `eclipse` | Solar eclipse fraction via Montenbruck-Gill: conical shadow with finite Sun radius + finite occulter radius, returning the visible-Sun fraction across umbra, penumbra, and anteumbra. |
+| `eclipse` | Solar eclipse fraction via Montenbruck-Gill: conical shadow with finite Sun radius + finite occulter radius, returning the visible-Sun fraction across umbra, penumbra, and anteumbra. Takes a **list** of occulting bodies and combines them by inclusion-exclusion, so shadows that overlap on the solar disc are not counted twice (Earth seen from a lunar orbit, Moon transiting the Sun for an Earth orbiter). |
 | `harmonics` | Spherical-harmonics gravity using the Pines / Lundberg-Schutz recurrence. Returns the acceleration `-∇V_pert` (callers just sum into `dvdt`). Includes a `_hpc` SIMD-friendly variant for production hot paths. |
 | `integrators` | ODE integrators with a generic RHS callback. RKDP45 (Dormand-Prince 5(4) "7S" pair, GMAT-style step control) and RK4 fixed-step. |
-| `forcemodels` | Composite RHS used by the integrator: two-body central + spherical harmonics + third bodies (Cowell) + cannonball SRP with conical eclipse (delegates to `eclipse`). Per-force breakdown helper for diagnostics. |
+| `forcemodels` | Composite RHS used by the integrator: two-body central + spherical harmonics + third bodies (Cowell) + cannonball SRP with conical eclipse over a caller-supplied occulter list (delegates to `eclipse`). Per-force breakdown helper for diagnostics. |
 | `events` | Event detection during propagation (impact on central body, generic threshold crossings). |
 | `solver` | One-call wrappers around the integrator + force model context (e.g. propagate-until-end). |
 | `mission` | Top-level orchestration that ties a spacecraft, force model, integrator, and output stream into a single simulation. |

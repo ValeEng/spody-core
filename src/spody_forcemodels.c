@@ -208,6 +208,48 @@ void spody_force_drag(const ForceModelContext *ctx, double et,
 }
 
 /* ============================================================
+ * Lit fraction seen by the satellite, combining every occulter in
+ * ctx->srp_occulter_naif[].
+ *
+ * Pure plumbing: it pulls the occulter positions out of the
+ * ephemeris and hands the geometry to spody_get_satlitfraction. Both
+ * the RHS and the diagnostic breakdown go through it so the two
+ * cannot drift apart.
+ *
+ * Costs no extra Chebyshev evaluation: the occulters are a subset of
+ * the third bodies, which the same step queries at the same epoch for
+ * their gravity, and spody_get_ephposition caches per (target, epoch).
+ * The central body needs no query at all -- it sits at the origin of
+ * the frame the states are integrated in.
+ * ============================================================ */
+static double srp_lit_fraction(const ForceModelContext *ctx, double et,
+                               const double r[3], const double sat2sun[3]) {
+    if (ctx->srp_n_occulters <= 0 || ctx->sun_radius <= 0.0) return 1.0;
+
+    double sat2occ[SPODY_ECL_MAX_OCCULTERS][3];
+    double radius [SPODY_ECL_MAX_OCCULTERS];
+    int    n = 0;
+
+    for (int i = 0; i < ctx->srp_n_occulters; ++i) {
+        if (ctx->srp_occulter_radius[i] <= 0.0) continue;
+        double occ_pos[3] = { 0.0, 0.0, 0.0 };
+        if (ctx->srp_occulter_naif[i] != ctx->naif_central) {
+            spody_get_ephposition(ctx->eph, ctx->naif_central,
+                                  ctx->srp_occulter_naif[i], et, occ_pos);
+        }
+        sat2occ[n][0] = occ_pos[0] - r[0];
+        sat2occ[n][1] = occ_pos[1] - r[1];
+        sat2occ[n][2] = occ_pos[2] - r[2];
+        radius[n]     = ctx->srp_occulter_radius[i];
+        n++;
+    }
+    if (n == 0) return 1.0;
+
+    return spody_get_satlitfraction(sat2sun, ctx->sun_radius,
+                                    sat2occ, radius, n);
+}
+
+/* ============================================================
  * Composite default RHS
  *
  * Sum order (from smallest to largest typical magnitude on LLO),
@@ -233,34 +275,15 @@ int spody_force_rhs_default(double t, const double *y, double *dy, void *user) {
     if (ctx->enable_srp && ctx->eph) {
         /* Sun position in central-body frame */
         double sun_pos[3];
-        spody_get_ephposition(ctx->eph, ctx->naif_central, 10, et, sun_pos);
+        spody_get_ephposition(ctx->eph, ctx->naif_central, SUN_NAIF, et, sun_pos);
 
         double r_sat_to_sun[3];
         r_sat_to_sun[0] = sun_pos[0] - r[0];
         r_sat_to_sun[1] = sun_pos[1] - r[1];
         r_sat_to_sun[2] = sun_pos[2] - r[2];
 
-        /* eclipse fraction (1 in full sunlight) */
-        double fraction = 1.0;
-        if (ctx->srp_occulter_radius > 0.0 && ctx->sun_radius > 0.0) {
-            double r_occ_to_sat[3];
-            double r_occ_to_sun[3];
-            if (ctx->srp_occulter_naif == ctx->naif_central) {
-                r_occ_to_sat[0] = r[0]; r_occ_to_sat[1] = r[1]; r_occ_to_sat[2] = r[2];
-                r_occ_to_sun[0] = sun_pos[0]; r_occ_to_sun[1] = sun_pos[1]; r_occ_to_sun[2] = sun_pos[2];
-            } else {
-                double occ_pos[3];
-                spody_get_ephposition(ctx->eph, ctx->naif_central, ctx->srp_occulter_naif, et, occ_pos);
-                r_occ_to_sat[0] = r[0] - occ_pos[0];
-                r_occ_to_sat[1] = r[1] - occ_pos[1];
-                r_occ_to_sat[2] = r[2] - occ_pos[2];
-                r_occ_to_sun[0] = sun_pos[0] - occ_pos[0];
-                r_occ_to_sun[1] = sun_pos[1] - occ_pos[1];
-                r_occ_to_sun[2] = sun_pos[2] - occ_pos[2];
-            }
-            fraction = spody_get_sateclipsestatus(r_occ_to_sat, r_occ_to_sun, r_sat_to_sun,
-                                                  ctx->sun_radius, ctx->srp_occulter_radius);
-        }
+        /* eclipse fraction over every occulter (1 in full sunlight) */
+        double fraction = srp_lit_fraction(ctx, et, r, r_sat_to_sun);
 
         spody_force_srp(ctx->sat, fraction, r_sat_to_sun, acc_tmp);
         acc_pert[0] += acc_tmp[0];
@@ -474,36 +497,14 @@ void spody_force_breakdown(const ForceModelContext *ctx,
     /* SRP (with eclipse fraction) */
     if (ctx->enable_srp && ctx->eph) {
         double sun_pos[3];
-        spody_get_ephposition(ctx->eph, ctx->naif_central, 10, et, sun_pos);
+        spody_get_ephposition(ctx->eph, ctx->naif_central, SUN_NAIF, et, sun_pos);
 
         double r_sat_to_sun[3];
         r_sat_to_sun[0] = sun_pos[0] - r[0];
         r_sat_to_sun[1] = sun_pos[1] - r[1];
         r_sat_to_sun[2] = sun_pos[2] - r[2];
 
-        double fraction = 1.0;
-        if (ctx->srp_occulter_radius > 0.0 && ctx->sun_radius > 0.0) {
-            double r_occ_to_sat[3];
-            double r_occ_to_sun[3];
-            if (ctx->srp_occulter_naif == ctx->naif_central) {
-                r_occ_to_sat[0] = r[0]; r_occ_to_sat[1] = r[1]; r_occ_to_sat[2] = r[2];
-                r_occ_to_sun[0] = sun_pos[0]; r_occ_to_sun[1] = sun_pos[1]; r_occ_to_sun[2] = sun_pos[2];
-            } else {
-                double occ_pos[3];
-                spody_get_ephposition(ctx->eph, ctx->naif_central,
-                                      ctx->srp_occulter_naif, et, occ_pos);
-                r_occ_to_sat[0] = r[0] - occ_pos[0];
-                r_occ_to_sat[1] = r[1] - occ_pos[1];
-                r_occ_to_sat[2] = r[2] - occ_pos[2];
-                r_occ_to_sun[0] = sun_pos[0] - occ_pos[0];
-                r_occ_to_sun[1] = sun_pos[1] - occ_pos[1];
-                r_occ_to_sun[2] = sun_pos[2] - occ_pos[2];
-            }
-            fraction = spody_get_sateclipsestatus(r_occ_to_sat, r_occ_to_sun,
-                                                  r_sat_to_sun,
-                                                  ctx->sun_radius,
-                                                  ctx->srp_occulter_radius);
-        }
+        double fraction = srp_lit_fraction(ctx, et, r, r_sat_to_sun);
         bd->eclipse_fraction = fraction;
         spody_force_srp(ctx->sat, fraction, r_sat_to_sun, bd->acc_srp);
     }
