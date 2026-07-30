@@ -129,12 +129,46 @@ typedef struct MappedIAU2006Data {
     IAU2006Series s_xy;  /* CIO locator quantity s(t)+XY/2    (tab5.2d) */
 } MappedIAU2006Data;
 
-/* Per-thread handle. Today this is a thin wrapper around the shared
- * data pointer (the evaluators are stateless); kept as a separate
- * type for symmetry with MappedEphemeris / MappedEOP, so adding
- * per-thread caches in the future does not change the API. */
+/* Node spacing of the (X, Y, s) interpolation grid, in seconds.
+ *
+ * The series costs ~70 us to evaluate -- 3084 terms, each a 14-term
+ * linear combination plus a sine and a cosine -- and the Earth force
+ * model needs it at every RHS evaluation, 78k times over a week-long
+ * GNSS propagation. X and Y are smooth, moving about 650 and 340 mas
+ * respectively over eight days, so a cubic through hourly nodes
+ * reproduces them to 3e-7 mas: roughly 40 nanometres at GNSS radius,
+ * six orders of magnitude below the millimetre these runs care about
+ * and two orders below the uncertainty of the EOP inputs themselves.
+ *
+ * ERA and polar motion are deliberately NOT interpolated. ERA advances
+ * 15 arcsec per second, so interpolating it would be the one thing
+ * here that actually costs accuracy, and both are cheap closed forms
+ * anyway. */
+#define SPODY_XYS_NODE_S 3600.0
+
+/* Points in the interpolation stencil. Four gives a cubic. */
+#define SPODY_XYS_STENCIL 4
+
+/* Per-thread handle: the shared data pointer plus this thread's
+ * interpolation cache. One handle per thread, as with
+ * MappedEphemeris / MappedEOP. */
 typedef struct MappedIAU2006 {
     const MappedIAU2006Data *data;
+
+    /* Cache for spody_iau2006_xys_interp.
+     *
+     * The nodes sit on a FIXED grid anchored at J2000, not on a window
+     * around the current time. That is what keeps the result
+     * reproducible: the interpolated X(t) is then a function of t
+     * alone, identical no matter which step sequence the integrator
+     * took to reach it. A window that followed the current time would
+     * make the force depend on the path, and two runs of the same case
+     * could legitimately differ. */
+    int    cache_valid;
+    long   cache_base;          /* grid index of the first stencil node */
+    double node_x[SPODY_XYS_STENCIL];
+    double node_y[SPODY_XYS_STENCIL];
+    double node_s[SPODY_XYS_STENCIL];
 } MappedIAU2006;
 
 /* Load the three IAU 2006 series from a directory containing the
@@ -165,6 +199,24 @@ int spody_free_MappedIAU2006(MappedIAU2006 *map);
  * Returns 0 on success, -1 on a NULL map. */
 int spody_iau2006_xys(const MappedIAU2006 *map, double t_tt_cy,
                      double *X_rad, double *Y_rad, double *s_rad);
+
+/* Same quantities, cubic-interpolated on the fixed hourly grid.
+ *
+ * This is what the force model calls. It exists because the exact
+ * evaluation dominated the cost of an Earth-centred propagation --
+ * ~73 us of the ~85 us spent per RHS evaluation at harmonic degree 70,
+ * so the price of the gravity field was almost entirely the price of
+ * re-deriving the Earth's orientation for it.
+ *
+ * Accuracy relative to `spody_iau2006_xys`: 3e-7 mas, i.e. tens of
+ * nanometres of orbit error at GNSS radius. Use the exact function
+ * when validating the series itself; use this one to propagate.
+ *
+ * `map` is mutated (the node cache), so one handle per thread.
+ *
+ * Returns 0 on success, -1 on a NULL map. */
+int spody_iau2006_xys_interp(MappedIAU2006 *map, double t_tt_cy,
+                             double *X_rad, double *Y_rad, double *s_rad);
 
 /* Earth Rotation Angle, Capitaine's strictly-linear function of UT1
  * (TN 36 eq. 5.15):

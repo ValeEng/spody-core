@@ -310,6 +310,8 @@ int spody_free_MappedIAU2006Data(MappedIAU2006Data *data) {
 int spody_setup_MappedIAU2006(MappedIAU2006 *map, const MappedIAU2006Data *data) {
     if (!map || !data) return -1;
     map->data = data;
+    map->cache_valid = 0;
+    map->cache_base  = 0;
     return 0;
 }
 
@@ -627,6 +629,49 @@ static double _jd_ut1_from_et(double et, double dut1_sec) {
     return (mjd_utc + JD_MJD_EPOCH) + dut1_sec / SECONDSxDAY;
 }
 
+/* Node spacing expressed in the units spody_iau2006_xys takes. */
+#define XYS_NODE_CY (SPODY_XYS_NODE_S / SECONDSxDAY / DAYS_PER_JULIAN_CY)
+
+int spody_iau2006_xys_interp(MappedIAU2006 *map, double t_tt_cy,
+                             double *X_rad, double *Y_rad, double *s_rad) {
+    if (!map || !map->data) return -1;
+
+    /* Bracket on the fixed grid, then take the stencil that puts t
+     * between nodes 1 and 2 -- the interior of a cubic, where a
+     * 4-point Lagrange is at its best. floor() rather than a cast so
+     * negative times (epochs before J2000) bracket correctly. */
+    long i = (long)floor(t_tt_cy / XYS_NODE_CY);
+    long base = i - 1;
+
+    if (!map->cache_valid || map->cache_base != base) {
+        for (int k = 0; k < SPODY_XYS_STENCIL; ++k) {
+            double t_k = (double)(base + k) * XYS_NODE_CY;
+            if (spody_iau2006_xys(map, t_k, &map->node_x[k],
+                                  &map->node_y[k], &map->node_s[k]) != 0) {
+                return -1;
+            }
+        }
+        map->cache_base  = base;
+        map->cache_valid = 1;
+    }
+
+    /* Lagrange on the uniform stencil, in the local coordinate
+     * u = (t - t_1) / h, so the nodes sit at u = -1, 0, 1, 2. */
+    double u = t_tt_cy / XYS_NODE_CY - (double)(base + 1);
+    double L0 = -u * (u - 1.0) * (u - 2.0) / 6.0;
+    double L1 =  (u + 1.0) * (u - 1.0) * (u - 2.0) / 2.0;
+    double L2 = -(u + 1.0) * u * (u - 2.0) / 2.0;
+    double L3 =  (u + 1.0) * u * (u - 1.0) / 6.0;
+
+    *X_rad = L0 * map->node_x[0] + L1 * map->node_x[1]
+           + L2 * map->node_x[2] + L3 * map->node_x[3];
+    *Y_rad = L0 * map->node_y[0] + L1 * map->node_y[1]
+           + L2 * map->node_y[2] + L3 * map->node_y[3];
+    *s_rad = L0 * map->node_s[0] + L1 * map->node_s[1]
+           + L2 * map->node_s[2] + L3 * map->node_s[3];
+    return 0;
+}
+
 /* Identity-rotation fallback for the misconfiguration path. */
 static void _identity(double R_a[3][3], double R_b[3][3]) {
     for (int i = 0; i < 3; ++i)
@@ -652,9 +697,12 @@ void spody_bf_rotation_earth(const ForceModelContext *ctx, double et,
     /* TT Julian centuries past J2000 (TDB-TT negligible at our target). */
     double t_tt_cy = (et / SECONDSxDAY) / DAYS_PER_JULIAN_CY;
 
-    /* CIP coordinates from the IAU 2006 series + IERS EOP offsets. */
+    /* CIP coordinates from the IAU 2006 series + IERS EOP offsets.
+     * Interpolated on the fixed hourly grid: the exact series is ~70 us
+     * a call and this runs at every RHS evaluation. The interpolation
+     * error is ~3e-7 mas, tens of nanometres at GNSS radius. */
     double X, Y, s;
-    spody_iau2006_xys(ctx->iau2006, t_tt_cy, &X, &Y, &s);
+    spody_iau2006_xys_interp(ctx->iau2006, t_tt_cy, &X, &Y, &s);
     X += dX_mas * MAS2RAD;
     Y += dY_mas * MAS2RAD;
 
