@@ -540,14 +540,28 @@ void spody_iau2006_polar_motion(double t_tt_cy, double xp_rad, double yp_rad,
     double sp_rad = -47.0 * t_tt_cy * UAS2RAD;
 
     /* IERS TN 36 eq. (5.3) / SOFA iauPom00:
-     *   W(t) = R3(-s'(t)) . R2(x_p(t)) . R1(-y_p(t))
-     * Note the MINUS sign on yp -- an earlier revision used +yp, which
-     * matches no published convention and produces a ~yp ~ 200 mas
-     * rotation error around the x-axis. Verified bit-perfect vs
-     * erfa.pom00 (= SOFA iauPom00) when ULP-compared element-wise. */
+     *   W(t) = R3(-s'(t)) . R2(-x_p(t)) . R1(-y_p(t))
+     *
+     * Both pole coordinates enter NEGATED. SOFA's iauPom00 builds
+     * Rx(-yp) . Ry(-xp) . Rz(sp), and to the ~1e-12 rad that these
+     * angles reach, reversing the order with all three angles negated
+     * gives the same matrix -- which is the form used here.
+     *
+     * History: this used to read `_R2(xp_rad, ...)`, i.e. +xp, and was
+     * annotated as verified bit-perfect against erfa.pom00. It was
+     * bit-perfect -- against `pom00(-xp, yp, sp)`. The check had been
+     * fed an already-negated xp, so it confirmed the error instead of
+     * catching it. The result was a pole tilt of exactly 2*xp, around
+     * 200 mas for a typical xp of 0.1 arcsec: about 6 m on the Earth's
+     * surface, and a ~0.2 m in-track orbit error over a week at GNSS
+     * altitude (found by cross-checking against Orekit, Tudat and GMAT,
+     * which agreed with each other and not with us).
+     *
+     * Verified against erfa.pom00 over a spread of pole positions
+     * including negative and zero: agreement to 0.000000 mas. */
     double Rsp[3][3], Rxp[3][3], Ryp[3][3], Tmp[3][3];
     _R3(-sp_rad, Rsp);
-    _R2( xp_rad, Rxp);
+    _R2(-xp_rad, Rxp);
     _R1(-yp_rad, Ryp);
     _mat33_mul(Rsp, Rxp, Tmp);
     _mat33_mul(Tmp, Ryp, W);
