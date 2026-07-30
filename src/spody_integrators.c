@@ -158,6 +158,10 @@ int spody_setup_integrator(IntegratorAllData *integ,
     integ->h_old  = 0.0;
     integ->t_old  = 0.0;
 
+    integ->n_accepted = 0;
+    integ->n_rejected = 0;
+    integ->n_rhs      = 0;
+
     if (opt) {
         integ->opt = *opt;
     } else {
@@ -267,6 +271,7 @@ static int step_rkdp45(IntegratorAllData *integ) {
 
             temp_clock = clock + integ->h * rkdp45_c[j];
             returnNumber = integ->rhs(temp_clock, temp, k + j*dim, integ->user);
+            integ->n_rhs++;
             if (returnNumber != 0) return SPODY_INTEG_ERR_RHS;
 
             for (int i = 0; i < dim; i++) {
@@ -349,6 +354,8 @@ static int step_rkdp45(IntegratorAllData *integ) {
             integ->h *= fmin(RKDP45_FACTOR_UPSCALE, scale);
             if (integ->h > integ->opt.h_max) integ->h = integ->opt.h_max;
 
+            integ->n_accepted++;
+
             #if DEBUG_INTEGRATORS == 1
             printf("[RKDP45_09][YES] iter : %d | start clock : %.6f | old time step : %.6f | new time step : %.6f | err : %.2e | scale : %.6f\n\n", steps, clock, integ->h_old, integ->h, err, scale);
             #endif
@@ -356,6 +363,8 @@ static int step_rkdp45(IntegratorAllData *integ) {
             return SPODY_INTEG_OK;
 
         } else {
+
+            integ->n_rejected++;
 
             // from GMAT
             double decPower = 1.0 / 4.0;
@@ -424,6 +433,7 @@ static int step_rk4(IntegratorAllData *integ) {
 
         temp_clock = clock + integ->h * rk4_c[j];
         returnNumber = integ->rhs(temp_clock, temp, k + j*dim, integ->user);
+        integ->n_rhs++;
         if (returnNumber != 0) return SPODY_INTEG_ERR_RHS;
 
         for (int i = 0; i < dim; i++) {
@@ -446,6 +456,10 @@ static int step_rk4(IntegratorAllData *integ) {
 
     integ->h_old = integ->h;
     integ->t = clock + integ->h_old;
+
+    /* Fixed step: every step is accepted by construction, so
+     * n_rejected stays at zero for this method. */
+    integ->n_accepted++;
 
     #if DEBUG_INTEGRATORS == 1
     printf("[RK4_05] start clock : %.6f | time step : %.6f | new clock : %.6f\n\n", clock, integ->h_old, integ->t);

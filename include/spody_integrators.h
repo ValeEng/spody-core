@@ -117,6 +117,20 @@ typedef struct {
     double *y_tmp;                // intermediate state for stage evaluation
     double *y_err;
 
+    /* Cost counters. Zeroed by spody_setup_integrator, monotonically
+     * increasing afterwards; read them whenever, typically once the run
+     * is over. They measure the integrator's work in a way that does
+     * not depend on machine, compiler or system load, which is what
+     * makes a cost comparable across runs and across tools -- wall
+     * clock alone is not.
+     *
+     * n_rhs counts every call to the RHS callback, including the ones
+     * spent on trial steps that were later rejected: that work really
+     * was done, and leaving it out would understate the cost. */
+    size_t n_accepted;            // accepted steps
+    size_t n_rejected;            // rejected trial steps
+    size_t n_rhs;                 // RHS evaluations
+
 } IntegratorAllData;
 
 /*
