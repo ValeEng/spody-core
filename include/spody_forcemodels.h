@@ -341,14 +341,23 @@ void spody_force_drag(const ForceModelContext *ctx, double et,
  */
 int spody_force_rhs_default(double t, const double *y, double *dy, void *user);
 
-/* Per-step hook (spody_prestep_fn) that retunes the harmonics
- * truncation degree for the coming step. Pass its address in
- * `IntegratorAllData.pre_step` with the SAME ForceModelContext used
- * for the RHS; leave that field NULL to keep the fixed degree, which
- * is the default and is bit-identical to not having this at all.
+/* Retunes the harmonics truncation degree for the coming step.
+ *
+ * Call it from the stepping loop, immediately BEFORE each
+ * spody_propagate_onestep, passing the integrator's current t / y / h
+ * and the same ForceModelContext the RHS uses. Never call it from
+ * inside the RHS: the stages of one step would then sample different
+ * vector fields, the embedded error estimate would read the model
+ * jump as truncation error, and the controller would shrink h
+ * fighting a discontinuity that is not in the dynamics. Once per
+ * step, before any stage, keeps the whole step on ONE smooth field --
+ * the property the Runge-Kutta order derivation assumes.
+ *
+ * A loop that never calls it keeps the fixed degree and reproduces
+ * earlier results bit for bit; there is no state to initialise.
  *
  * Writes `ctx->hg->N_eval` and returns immediately when ctx->hg is
- * NULL (harmonics off), so it is safe to wire unconditionally.
+ * NULL (harmonics off), so it is safe to call unconditionally.
  *
  * The degree-n term of the potential decays as (R_ref/r)^n, so
  * requiring it below a relative threshold eps gives the degree

@@ -150,11 +150,10 @@ int spody_setup_integrator(IntegratorAllData *integ,
 
     zero_all_buffers(integ);
 
-    integ->method   = method;
-    integ->dim      = dim;
-    integ->rhs      = rhs;
-    integ->user     = user;
-    integ->pre_step = NULL;   // opt-in; see spody_prestep_fn
+    integ->method = method;
+    integ->dim    = dim;
+    integ->rhs    = rhs;
+    integ->user   = user;
     integ->t      = 0.0;
     integ->h_old  = 0.0;
     integ->t_old  = 0.0;
@@ -479,15 +478,6 @@ static int step_verlet(IntegratorAllData *integ) { (void)integ; return SPODY_INT
 
 int spody_propagate_onestep(IntegratorAllData *integ) {
     if (!integ || !integ->rhs || !integ->y) return SPODY_INTEG_ERR_NULL;
-    /* One call per step, before any stage: the hook's whole purpose is
-     * that whatever it tunes stays FIXED for every stage below,
-     * retries included. Placed here rather than inside each step_*()
-     * so all methods get it from one site. */
-    if (integ->pre_step
-            && integ->pre_step(integ->t, integ->y, integ->h,
-                               integ->user) != 0) {
-        return SPODY_INTEG_ERR_RHS;
-    }
     switch (integ->method) {
         case SPODY_INTEG_RK4:    return step_rk4(integ);
         case SPODY_INTEG_RK45:   return step_rkdp45(integ);

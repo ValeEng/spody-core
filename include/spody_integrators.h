@@ -54,35 +54,6 @@ extern "C" {
 typedef int (*spody_rhs_fn)(double t, const double *y, double *dy, void *user);
 
 /*
- * Optional per-step callback, invoked ONCE before the stages of each
- * step -- and NOT again on the internal retries that a rejected trial
- * step triggers.
- *
- *   t    : independent variable at the START of the step.
- *   y    : state at the start of the step. Must not be modified.
- *   h    : step size about to be attempted. Retries only ever shrink
- *          it, so a decision taken for this h stays valid for them.
- *   user : the same opaque payload the RHS receives.
- *
- * Return 0 to proceed, non-zero to abort the step.
- *
- * It exists so a force model can retune ITSELF for the coming step --
- * typically to trade evaluation cost against an accuracy it can only
- * judge from the current state. Retuning inside the RHS instead would
- * be wrong: the stages would then sample different vector fields, the
- * embedded error estimate would read the model jump as truncation
- * error, and the controller would shrink h fighting a discontinuity
- * that is not in the dynamics. Deciding here, once, keeps every stage
- * of a step on ONE smooth field -- the property the Runge-Kutta order
- * derivation assumes.
- *
- * NULL (the value left by spody_setup_integrator) disables it, so
- * existing callers are unaffected bit for bit.
- */
-typedef int (*spody_prestep_fn)(double t, const double *y, double h,
-                                void *user);
-
-/*
  * Available integrator methods. Fixed-step methods ignore tolerance fields,
  * adaptive methods ignore the requested step size after the first stage.
  */
@@ -140,7 +111,6 @@ typedef struct {
 
     spody_rhs_fn rhs;             // user-provided dynamics
     void *user;                   // opaque payload passed to rhs
-    spody_prestep_fn pre_step;    // optional per-step hook, NULL = none
 
     // scratch buffers, sized at setup time, reused across steps
     double *k;                    // RK stages, kept alive after step accept for dense output
