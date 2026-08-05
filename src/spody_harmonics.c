@@ -110,7 +110,10 @@ void spody_get_hgaccbodyfixed(HarmonicGravity *hg, double pos[3], double acc_out
     double u = pos[2] * ir; //sin phi | phi = latitude
     
     double rho = hg->hgd->R_ref * ir; // R_ref/r
-    int N_max = hg->hgd->N; //max degree
+    // Truncation degree: the per-thread override when set, else the
+    // full loaded field. Buffers are sized for hgd->N either way.
+    int N_max = (hg->N_eval > 0 && hg->N_eval < hg->hgd->N)
+              ? hg->N_eval : hg->hgd->N;
 
     // buffers pointers
     double *real = hg->real;
@@ -275,7 +278,9 @@ void spody_get_hgaccbodyfixed_hpc(HarmonicGravity *hg, double pos[3], double acc
     double u = pos[2] * ir;
 
     double rho = hg->hgd->R_ref * ir;
-    int N_max = hg->hgd->N;
+    // See the reference kernel: per-thread truncation, 0 = full field.
+    int N_max = (hg->N_eval > 0 && hg->N_eval < hg->hgd->N)
+              ? hg->N_eval : hg->hgd->N;
 
     double * SPODY_RESTRICT real = hg->real;
     double * SPODY_RESTRICT imag = hg->imag;
@@ -475,8 +480,9 @@ int spody_setup_HarmonicGravity(HarmonicGravity *hg, const HarmonicGravityData *
     // we have allocated more memory than necessary for simplicity (N+2)
     
     hg->hgd = hgd;
+    hg->N_eval = 0;   // 0 = evaluate the full loaded field (see header)
     int degree = hg->hgd->N;
-        
+
     int r_size = (degree + 3) * sizeof(double);
     hg->A_row0 = malloc(r_size);
     hg->A_row1 = malloc(r_size);

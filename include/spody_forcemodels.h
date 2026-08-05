@@ -341,6 +341,52 @@ void spody_force_drag(const ForceModelContext *ctx, double et,
  */
 int spody_force_rhs_default(double t, const double *y, double *dy, void *user);
 
+/* Per-step hook (spody_prestep_fn) that retunes the harmonics
+ * truncation degree for the coming step. Pass its address in
+ * `IntegratorAllData.pre_step` with the SAME ForceModelContext used
+ * for the RHS; leave that field NULL to keep the fixed degree, which
+ * is the default and is bit-identical to not having this at all.
+ *
+ * Writes `ctx->hg->N_eval` and returns immediately when ctx->hg is
+ * NULL (harmonics off), so it is safe to wire unconditionally.
+ *
+ * The degree-n term of the potential decays as (R_ref/r)^n, so
+ * requiring it below a relative threshold eps gives the degree
+ * directly:
+ *
+ *     N(r) = ln(1/eps) / ln(r / R_ref)
+ *
+ * Only the ratio r/R_ref appears, so there is no per-body or
+ * per-model constant to calibrate: the same expression serves any
+ * central body and any coefficient set. It deliberately DROPS the
+ * decay of the coefficients themselves (Kaula-type sigma_n ~ K/n^2).
+ * Including that would lower the predicted degree and make the result
+ * depend on how well a given field follows the power law; keeping
+ * only the geometric factor makes the answer an upper bound instead,
+ * which is the safe direction for a truncation rule.
+ *
+ * Being an upper bound is an argument, not a proof: a field whose
+ * coefficients do not decay smoothly with degree (resonances, an
+ * unusually rough body) can in principle need more. Check a new
+ * coefficient set against a per-degree convergence walk on its real
+ * Cnm/Snm before relying on this.
+ *
+ * The degree is picked from a LOWER BOUND on the radius the step can
+ * reach, not from the radius it starts at:
+ *
+ *     r_bound = |r| - SPODY_HG_ADAPTIVE_STEP_MARGIN * |v| * |h|
+ *
+ * Without it, a step starting where the field is weak would enter its
+ * stages with a degree too low for the part of the step that descends
+ * toward the body. The bound is what makes the choice safe rather
+ * than merely typical, and it is cheap: where steps are long the
+ * velocity is low, so |v|*h stays a small fraction of the radius.
+ *
+ * The result is capped at the loaded degree (ctx->hg->hgd->N), so
+ * this can only ever ask for LESS work than the fixed setting, never
+ * for coefficients that were not loaded. */
+int spody_adapt_hgdegree(double t, const double *y, double h, void *user);
+
 /* CR3BP RHS in the synodic rotating frame, dimensional units.
  *
  * Reads ONLY the cr3bp_* fields of the context (all HF fields may be

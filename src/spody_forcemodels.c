@@ -260,6 +260,43 @@ static double srp_lit_fraction(const ForceModelContext *ctx, double et,
  *   4. spherical harmonics    ~ 1e-5  km/s^2
  *   5. central two-body       ~ 1.5e-3 km/s^2  (added last)
  * ============================================================ */
+/* The rule itself, kept free of every struct in this file so it can be
+ * read, checked and reasoned about as plain arithmetic: the smallest
+ * degree whose truncation error stays below a relative accuracy of
+ * exp(-ln_inv_eps) at radius r_km, clamped to [2, N_max].
+ *
+ * At or below the reference sphere the ratio is <= 1 and there is no
+ * geometric decay to exploit, so nothing can be dropped. */
+static int hgdegree_for_radius(double r_km, double R_ref_km,
+                               double ln_inv_eps, int N_max) {
+    if (!(r_km > R_ref_km) || !(R_ref_km > 0.0)) return N_max;
+
+    double n = ln_inv_eps / log(r_km / R_ref_km);
+    if (!(n > 2.0)) return 2;                  /* also catches NaN */
+    if (n >= (double)N_max) return N_max;
+    return (int)ceil(n);
+}
+
+int spody_adapt_hgdegree(double t, const double *y, double h, void *user) {
+    (void)t;
+    ForceModelContext *ctx = (ForceModelContext*)user;
+    if (!ctx || !ctx->hg || !ctx->hg->hgd) return 0;   /* harmonics off */
+    const HarmonicGravityData *hgd = ctx->hg->hgd;
+
+    double r = sqrt(y[0]*y[0] + y[1]*y[1] + y[2]*y[2]);
+    double v = sqrt(y[3]*y[3] + y[4]*y[4] + y[5]*y[5]);
+
+    /* Lowest radius the step can reach, bounded by the straight-line
+     * excursion. Under gravity the path bends inward of that line, so
+     * the accuracy margin on the degree absorbs the difference. */
+    double r_bound = r - SPODY_HG_ADAPTIVE_STEP_MARGIN * v * fabs(h);
+
+    ctx->hg->N_eval = hgdegree_for_radius(r_bound, hgd->R_ref,
+                                          SPODY_HG_ADAPTIVE_LN_INV_EPS,
+                                          hgd->N);
+    return 0;
+}
+
 int spody_force_rhs_default(double t, const double *y, double *dy, void *user) {
     ForceModelContext *ctx = (ForceModelContext*)user;
     const double *r = y;

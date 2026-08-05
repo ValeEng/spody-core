@@ -167,6 +167,26 @@ extern "C" {
 #define SPODY_CAL_MIN_WINDOW_SAMPLES  6       // fewer -> fold into previous window
 #define SPODY_CAL_MIN_DELTA_RMS_KM    1.0e-6  // drag-signal rms floor (1 mm)
 
+    // Adaptive harmonics degree (spody_hg_adaptive_degree). The rule
+    // is N(r) = LN_INV_EPS / ln(r / R_ref), i.e. the degree at which
+    // the geometric decay (R_ref/r)^n drops the term below a relative
+    // accuracy of exp(-LN_INV_EPS).
+    //
+    // 38 sits deliberately above ln(1/DBL_EPSILON) = 36.04, the value
+    // "indistinguishable in double precision" would suggest. The rule
+    // ignores the decay of the coefficients themselves, so it is an
+    // upper bound only as long as that omission dominates; the extra
+    // margin keeps it one at radii where the two effects are close.
+    // It costs a few percent of the achievable saving, which is the
+    // right trade for a truncation that must never remove signal.
+    //
+    // The step margin scales the |v|*h excursion used to bound the
+    // lowest radius reachable within one integrator step, so the
+    // degree is picked for that radius rather than for the one the
+    // step starts from. 1.0 = the full straight-line excursion.
+#define SPODY_HG_ADAPTIVE_LN_INV_EPS  38.0
+#define SPODY_HG_ADAPTIVE_STEP_MARGIN 1.0
+
 #ifdef __cplusplus
 }
 #endif

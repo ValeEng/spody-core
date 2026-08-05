@@ -59,6 +59,22 @@ typedef struct {
     double *A_row2; // Row n-1 (previus)
     double *real;
     double *imag;
+    /* Per-evaluation truncation degree. 0 (the value left by
+     * spody_setup_HarmonicGravity) means "use hgd->N", i.e. the full
+     * loaded field -- so every existing caller is unaffected, bit for
+     * bit.
+     *
+     * It lives HERE and not in HarmonicGravityData because the Data
+     * struct is shared read-only across worker threads while this
+     * handle is per-thread: writing a truncation degree into the
+     * shared struct would silently change it for every other worker.
+     *
+     * The buffers above stay sized for hgd->N, so any value in
+     * [2, hgd->N] is safe to write between evaluations. Callers
+     * driving it from the orbit radius MUST hold it constant across
+     * all stages of one integrator step -- see
+     * spody_hg_adaptive_degree(). */
+    int N_eval;
 } HarmonicGravity;
 
 void spody_get_hgaccbodyfixed(HarmonicGravity *hg, double pos[3], double acc_out[3]);
