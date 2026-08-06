@@ -14,6 +14,15 @@ raw_data/
 └── GRGM1200B/      ← GRAIL lunar gravity model, updated release (recommended)
 ```
 
+A **Moon-centred** propagation needs only the two above. An
+**Earth-centred** one additionally needs a terrestrial gravity field,
+the Earth-orientation inputs, and — with drag on — space weather; see
+[Earth-centred datasets](#earth-centred-datasets) below. Those are not
+lunar-mission assets and are usually kept in the consuming
+application's own data directory rather than here (the SpOdy app's
+Setup wizard downloads them into its portable `data/`), so this folder
+carries no subdirectory for them by default.
+
 ---
 
 ## DE440 — JPL Planetary Ephemeris
@@ -196,10 +205,81 @@ spody_free_HarmonicGravityData(&hgd);
 
 ---
 
+## Earth-centred datasets
+
+Only needed when the central body is the Earth. None of these is a
+`.tab`-style drop-in: the gravity field needs a conversion step, and
+the other three are read directly from their published text formats.
+
+### EIGEN-6C4 — terrestrial gravity field
+
+Used by: `spody_harmonics`, after conversion by `spody_icgem`.
+
+Download the model in ICGEM `.gfc` form from
+[https://icgem.gfz-potsdam.de/tom_longtime](https://icgem.gfz-potsdam.de/tom_longtime),
+then convert it once to the engine's `.tab` — from C:
+
+```c
+spody_convert_icgem_to_tab("eigen-6c4.gfc", "eigen-6c4.tab", /*max_degree=*/0);
+```
+
+or, if you have the SpOdy application built on top of this library:
+
+```bash
+spody convert harmonics_icgem eigen-6c4.gfc eigen-6c4.tab
+```
+
+`max_degree <= 0` (equivalently: omitting `--max-degree`) keeps the
+full field, and that is the recommended setting even though EIGEN-6C4
+runs to degree 2190. The harmonics loader truncates again at read time
+according to the caller's requested degree, so storing everything
+leaves every future run free to pick its own truncation without a
+re-conversion. Cap it only if the on-disk size is the binding
+constraint.
+
+### IERS Earth Orientation Parameters
+
+Used by: `spody_eop`, feeding `spody_earth_orientation`.
+
+One file, `finals2000A.all`, from
+[https://datacenter.iers.org/products/eop/rapid/standard/](https://datacenter.iers.org/products/eop/rapid/standard/).
+It carries polar motion, UT1−UTC and celestial-pole offsets, with the
+recent span observed and a forward span predicted.
+
+**It goes stale.** The predicted tail degrades as it ages, so a
+long-lived install should re-download periodically rather than treat
+this as a one-time asset.
+
+### IAU 2006/2000A_R06 precession-nutation tables
+
+Used by: `spody_earth_orientation` for the `(X, Y, s)` series.
+
+The tabulated series from
+[https://iers-conventions.obspm.fr/](https://iers-conventions.obspm.fr/).
+Point the consuming application at the directory holding them; unlike
+the EOP file these are fixed and never need refreshing.
+
+### CelesTrak space weather
+
+Used by: `spody_atmosphere` → `spody_nrlmsise00`, only when drag is on.
+
+One file, `SW-All.csv`, from
+[https://celestrak.org/SpaceData/](https://celestrak.org/SpaceData/):
+observed daily F10.7 plus the 3-hour Ap history NRLMSISE-00 needs for
+storm-time density. Like the EOP file it has an observed span and a
+predicted tail, and re-downloading is what keeps a run near the
+present epoch honest.
+
+---
+
 ## Summary
 
-| Folder | File(s) needed | Source |
+| Dataset | File(s) needed | Source |
 |---|---|---|
 | `DE440/` | `header.440` + `ascp0XXXX.440` + generated `de440.spody` (SPDYEPET, ET seconds) | [JPL FTP](https://ssd.jpl.nasa.gov/ftp/eph/planets/ascii/de440/) |
 | `GRGM1200A/` | `gggrx_1200a_sha.tab` + `gggrx_1200a_sha.lbl` | [NASA PGDA](https://pgda.gsfc.nasa.gov/products/50) |
 | `GRGM1200B/` | `gggrx_1200b_sha.tab` + `gggrx_1200b_sha.lbl` (recommended) | [NASA PGDA](https://pgda.gsfc.nasa.gov/products/50) |
+| EIGEN-6C4 *(Earth)* | `eigen-6c4.gfc` → converted `.tab` | [ICGEM](https://icgem.gfz-potsdam.de/tom_longtime) |
+| IERS EOP *(Earth)* | `finals2000A.all` — refresh periodically | [IERS](https://datacenter.iers.org/products/eop/rapid/standard/) |
+| IAU 2006 tables *(Earth)* | the `(X, Y, s)` series directory | [IERS Conventions](https://iers-conventions.obspm.fr/) |
+| Space weather *(drag)* | `SW-All.csv` — refresh periodically | [CelesTrak](https://celestrak.org/SpaceData/) |

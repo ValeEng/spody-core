@@ -15,12 +15,15 @@
 
 The library provides a clean, modular API covering the core pillars of orbital mechanics:
 
-- 🌍 **Ephemeris parsing** — JPL DE binary, ET seconds past J2000 with `SPDYEPET` magic header
+- 🌍 **Ephemeris parsing** — JPL DE binary, ET seconds past J2000 with `SPDYEPET` magic header; position, velocity and full state via the analytic Chebyshev derivative
 - 🌑 **Eclipse detection** — Conical shadow with umbra / penumbra / anteumbra (Montenbruck-Gill, finite Sun + occulter), **multi-occulter**: overlapping shadows combined by inclusion-exclusion
-- 🌐 **Spherical harmonics gravity** — High-fidelity lunar gravity with Pines/Lundberg-Schutz recurrence (stable up to N≥1000)
-- 🚀 **Numerical integrators** — Adaptive Dormand-Prince 5(4) "7S" stability-optimal pair, classical RK4
-- 🛰 **Force models** — Composite RHS with two-body + harmonics + third bodies + SRP (cannonball, conical eclipse)
-- 🎯 **Events & solver** — Event detection (impact, threshold crossings), one-shot propagator wrapper
+- 🌐 **Spherical harmonics gravity** — Body-agnostic (lunar GRGM, terrestrial EIGEN) via the Pines/Lundberg-Schutz recurrence (stable up to N≥1000), with an optional **adaptive truncation degree** driven by the orbit radius
+- 🚀 **Numerical integrators** — Adaptive Dormand-Prince 5(4) "7S" stability-optimal pair, classical RK4, reporting accepted / rejected steps and RHS evaluations
+- 🛰 **Force models** — Composite RHS with two-body + harmonics + third bodies + SRP (cannonball, conical eclipse) + atmospheric drag; a separate **CR3BP** RHS for the synodic rotating frame
+- 🌬 **Atmosphere** — Native NRLMSISE-00 port with CelesTrak space-weather input and an optional density-scale `k(t)` node table
+- 🧭 **Time & Earth orientation** — IERS leap seconds + SPICE `deltet`, so ET is true TDB end-to-end; EOP reader and the IAU 2006/2000A_R06 inertial-to-ITRS chain
+- 🎯 **Events & solver** — Event detection (impact, eclipse, altitude crossings) with Hermite + Brent localisation, one-shot propagator wrapper
+- 🔄 **Format converters** — ICGEM `.gfc` gravity fields, IGS/MGEX SP3 precise orbits, RINEX-NAV GPS and GLONASS broadcast, CCSDS OEM
 - 🧩 **I/O & mission** — Buffered file output and a top-level mission orchestration layer
 
 The runtime API is **thread-safe by construction**: shared, read-only data structures
@@ -35,15 +38,26 @@ single dataset can drive many concurrent propagations without contention.
 |---|---|
 | `ephemeris` | Parses and queries JPL planetary ephemerides (e.g. DE440). On-disk format is `SPDYEPET` (ET seconds past J2000, ~250× more precision than legacy JD-days). Memory-mapped with thread-safe handle/data split. |
 | `eclipse` | Solar eclipse fraction via Montenbruck-Gill: conical shadow with finite Sun radius + finite occulter radius, returning the visible-Sun fraction across umbra, penumbra, and anteumbra. Takes a **list** of occulting bodies and combines them by inclusion-exclusion, so shadows that overlap on the solar disc are not counted twice (Earth seen from a lunar orbit, Moon transiting the Sun for an Earth orbiter). |
-| `harmonics` | Spherical-harmonics gravity using the Pines / Lundberg-Schutz recurrence. Returns the acceleration `-∇V_pert` (callers just sum into `dvdt`). Includes a `_hpc` SIMD-friendly variant for production hot paths. |
-| `integrators` | ODE integrators with a generic RHS callback. RKDP45 (Dormand-Prince 5(4) "7S" pair, GMAT-style step control) and RK4 fixed-step. |
-| `forcemodels` | Composite RHS used by the integrator: two-body central + spherical harmonics + third bodies (Cowell) + cannonball SRP with conical eclipse over a caller-supplied occulter list (delegates to `eclipse`). Per-force breakdown helper for diagnostics. |
-| `events` | Event detection during propagation (impact on central body, generic threshold crossings). |
+| `harmonics` | Spherical-harmonics gravity using the Pines / Lundberg-Schutz recurrence. Returns the acceleration `-∇V_pert` (callers just sum into `dvdt`). Includes a `_hpc` SIMD-friendly variant for production hot paths, and an adaptive degree rule `N(r) = ln(1/eps) / ln(r / R_ref)` that lets an eccentric orbit stop paying its closest-approach degree for the whole revolution. |
+| `integrators` | ODE integrators with a generic RHS callback. RKDP45 (Dormand-Prince 5(4) "7S" pair, GMAT-style step control) and RK4 fixed-step; the `spody_integrator_method` enum also reserves RK78 and velocity-Verlet slots, not yet implemented. Every run carries `n_accepted` / `n_rejected` / `n_rhs` counters. |
+| `forcemodels` | Composite RHS used by the integrator: two-body central + spherical harmonics + third bodies (Cowell) + cannonball SRP with conical eclipse over a caller-supplied occulter list (delegates to `eclipse`) + atmospheric drag with air co-rotation. Per-force breakdown helper for diagnostics. A second RHS, `spody_force_rhs_cr3bp`, integrates the Circular Restricted 3-Body Problem in the synodic rotating frame from the `cr3bp_*` fields of the same context, with converters to and from a primary's inertial frame. |
+| `atmosphere` | Space-weather ingestion (CelesTrak: observed daily F10.7 + storm-time 3-hour Ap history) and the density-scale `k(t)` node table produced by an external calibration, both memory-mapped with the same handle/data split as `ephemeris`. |
+| `nrlmsise00` | Native C port of the NRL MSISE-00 empirical atmosphere (`gtd7` / `gtd7d`), validated against the official NRL reference driver to the printed 7 digits. |
+| `time` | The one time-scale chain: Gregorian↔JD, IERS leap seconds (`spody_tai_minus_utc`), the SPICE `deltet` TDB−TT term (`spody_tdb_minus_tt`), ET↔UTC MJD, day-of-year helpers. ET is true TDB everywhere as a result. |
+| `eop` | IERS Earth-orientation reader (`finals2000A.all`): polar motion, UT1−UTC, celestial-pole offsets, interpolated on demand, with observed / predicted coverage accessors. |
+| `earth_orientation` | The IAU 2006/2000A_R06 chain from ICRF to ITRS — precession-nutation `(X, Y, s)` on a fixed hourly grid, Earth rotation angle, polar motion — exposed to the force model as the Earth's body-fixed rotation. |
+| `kepler` | Kepler equation solve (true↔mean anomaly) and Keplerian↔Cartesian conversion. |
+| `interp` | Shared tabulated primitives: bracketing search, linear interpolation, cubic Hermite — the building blocks under the ephemeris, EOP, space-weather and event-refinement paths. |
+| `events` | Event detection during propagation: impact (one-shot), eclipse-fraction threshold crossings and altitude crossings (both recurring, ascending + descending), each localised by cubic Hermite + Brent root-finding. |
+| `icgem` | Converts an ICGEM `.gfc` spherical-harmonic gravity field into the engine's `.tab` format. |
+| `sp3` | Reads IGS / MGEX SP3 precise orbits (multi-file, concatenated) and writes an ICRF position reference binary. |
+| `gps` / `glonass` | RINEX-NAV broadcast ephemeris to ICRF state. GPS broadcasts Keplerian elements, so the converter runs the IS-GPS-200 Kepler-with-corrections propagation (plus Remondi velocities); GLONASS broadcasts the state vector directly in PZ-90, so there the work is the terrestrial-to-inertial rotation including the `omega x r` term. |
+| `oem` | Reads CCSDS OEM text ephemerides (multi-file, overlap-deduplicated) into an ICRF state reference binary. |
 | `solver` | One-call wrappers around the integrator + force model context (e.g. propagate-until-end). |
 | `mission` | Top-level orchestration that ties a spacecraft, force model, integrator, and output stream into a single simulation. |
 | `io` | Buffered file I/O helpers for trajectory and diagnostic dumps. |
 | `math` | Shared math utilities (rotation matrices, vector ops). |
-| `mapping` | Cross-platform memory-mapped file I/O (used by `ephemeris`). |
+| `mapping` | Cross-platform memory-mapped file I/O (used by `ephemeris`, `eop`, `atmosphere`). |
 | `version` | Compile-time macros + runtime accessors for the library version, git hash (with `-dirty` flag), and build timestamp. |
 
 ---
@@ -55,9 +69,28 @@ Spody Core relies on standard, publicly available scientific datasets:
 - **JPL DE440 Ephemeris (ASCII)**
   → [https://ssd.jpl.nasa.gov/ftp/eph/planets/ascii/](https://ssd.jpl.nasa.gov/ftp/eph/planets/ascii/)
 
-- **GRGM1200A Gravitational Model**
+- **GRGM1200A / GRGM1200B Gravitational Model**
   Lunar gravitational harmonics coefficients up to degree/order 1200.
+  GRGM1200B is the updated release and the recommended one.
   → [https://pgda.gsfc.nasa.gov/products/50](https://pgda.gsfc.nasa.gov/products/50)
+
+- **EIGEN-6C4 Gravitational Model**
+  Terrestrial gravitational harmonics, needed for an Earth central
+  body. Distributed as ICGEM `.gfc`; convert with the `icgem` module.
+  → [https://icgem.gfz-potsdam.de/tom_longtime](https://icgem.gfz-potsdam.de/tom_longtime)
+
+- **IERS Earth Orientation Parameters** (`finals2000A.all`)
+  Polar motion, UT1−UTC and pole offsets for the ICRF↔ITRS chain.
+  Refreshed regularly upstream — consumers should re-download it.
+  → [https://datacenter.iers.org/products/eop/rapid/standard/](https://datacenter.iers.org/products/eop/rapid/standard/)
+
+- **IAU 2006/2000A_R06 precession-nutation tables**
+  The series evaluated for `(X, Y, s)`.
+  → [https://iers-conventions.obspm.fr/](https://iers-conventions.obspm.fr/)
+
+- **CelesTrak space weather** (`SW-All.csv`)
+  Observed daily F10.7 and 3-hour Ap history driving NRLMSISE-00.
+  → [https://celestrak.org/SpaceData/](https://celestrak.org/SpaceData/)
 
 ---
 
@@ -67,18 +100,30 @@ Spody Core relies on standard, publicly available scientific datasets:
 spody-core/
 ├── include/                  # Public headers — include this folder in your build
 │   ├── spody_core.h          # Umbrella header (include this one)
-│   ├── spody_const.h         # Physical and numerical constants
+│   ├── spody_const.h         # Physical and numerical constants (ALL of them)
+│   ├── spody_atmosphere.h
+│   ├── spody_earth_orientation.h
 │   ├── spody_eclipse.h
 │   ├── spody_ephemeris.h
+│   ├── spody_eop.h
 │   ├── spody_events.h
 │   ├── spody_forcemodels.h
+│   ├── spody_glonass.h
+│   ├── spody_gps.h
 │   ├── spody_harmonics.h
+│   ├── spody_icgem.h
 │   ├── spody_integrators.h
+│   ├── spody_interp.h
 │   ├── spody_io.h
+│   ├── spody_kepler.h
 │   ├── spody_mapping.h
 │   ├── spody_math.h
 │   ├── spody_mission.h
+│   ├── spody_nrlmsise00.h
+│   ├── spody_oem.h
 │   ├── spody_solver.h
+│   ├── spody_sp3.h
+│   ├── spody_time.h
 │   └── spody_version.h.in    # Template -> generated as spody_version.h at configure time
 ├── src/                      # Implementation files (.c)
 ├── raw_data/                 # External datasets (DE440, GRGM1200B; see raw_data/README.md)
@@ -232,7 +277,9 @@ Regardless of the integration method, include the umbrella header:
 #include "spody_core.h"
 ```
 
-This exposes the full public API (ephemeris, eclipse, harmonics, integrators, math, mapping).
+This exposes the full public API (ephemeris, eclipse, harmonics, integrators,
+force models, events, atmosphere, time, Earth orientation, converters, math,
+mapping).
 
 ### Quick tour
 
@@ -260,7 +307,7 @@ spody_free_MappedEphemerisData(&med);
 
 ```c
 HarmonicGravityData hgd = {0};
-spody_load_HarmonicGravityData(&hgd, "raw_data/GRGM1200A/gggrx_1200a_sha.tab", 100);
+spody_load_HarmonicGravityData(&hgd, "raw_data/GRGM1200B/gggrx_1200b_sha.tab", 100);
 
 HarmonicGravity hg = {0};                       // one per thread
 spody_setup_HarmonicGravity(&hg, &hgd);
