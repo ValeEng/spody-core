@@ -54,11 +54,25 @@ extern "C" {
 /* Kinds of supported events. The enum is open: adding new kinds (e.g.
  * apsis passage, geodetic-region entry) is non-breaking -- the
  * dispatch switches in spody_event_check[_refined] add one case
- * each, the wire format stays as-is. */
+ * each, the wire format stays as-is.
+ *
+ * INITIAL_STATE / FINAL_STATE are LIFE MARKERS, not predicates: they
+ * have no trigger condition and are never checked by
+ * spody_event_check[_refined]. The drive loop writes one of each per
+ * propagated object -- at t0 and at whatever ends the run (planned
+ * duration, impact, stop-class event) -- so that every object appears
+ * in the log even when no predicate ever fires. Post-processing needs
+ * that: an object confined between two altitude thresholds crosses
+ * nothing, and without a life marker it is indistinguishable from an
+ * object that was never propagated. They also pin the analysis window
+ * and the starting region without a side-channel (the run's input
+ * snapshot), which is what makes an events log self-contained. */
 typedef enum {
-    SPODY_EVENT_KIND_IMPACT       = 0, /* one-shot: |r_sat - r_body| < radius_km   */
-    SPODY_EVENT_KIND_ECLIPSE      = 1, /* recurring: eclipse fraction crosses threshold */
-    SPODY_EVENT_KIND_ALT_CROSSING = 2  /* recurring: altitude wrt a body crosses a target value (asc + desc) */
+    SPODY_EVENT_KIND_IMPACT        = 0, /* one-shot: |r_sat - r_body| < radius_km   */
+    SPODY_EVENT_KIND_ECLIPSE       = 1, /* recurring: eclipse fraction crosses threshold */
+    SPODY_EVENT_KIND_ALT_CROSSING  = 2, /* recurring: altitude wrt a body crosses a target value (asc + desc) */
+    SPODY_EVENT_KIND_INITIAL_STATE = 3, /* life marker: object exists, state at t0 */
+    SPODY_EVENT_KIND_FINAL_STATE   = 4  /* life marker: object's propagation ended */
     /* future: SPODY_EVENT_KIND_APSIS, _GEODETIC_REGION, ... */
 } spody_event_kind;
 
@@ -122,6 +136,27 @@ typedef enum {
  *   altitude actually attained (= altitude_km up to solver tolerance).
  *   Direction (ascending / descending) is recoverable from the radial
  *   component of y_trigger[3..5].
+ *
+ * INITIAL_STATE / FINAL_STATE (life markers, no predicate):
+ *   Emitted unconditionally by the drive loop, once each per
+ *   propagated object, never by spody_event_check[_refined]. The
+ *   caller fills them exactly as an ALT_CROSSING record so that one
+ *   post-processing path serves both:
+ *     `naif_id`    reference body (the central body; in CR3BP one
+ *                  marker per primary, since neither is "central");
+ *     `radius_km`  that body's physical radius;
+ *     `distance_km` |r_sat - r_body| at the marker's timestamp, so
+ *                  `distance_km - radius_km` is the altitude and the
+ *                  altitude-band machinery places the marker without
+ *                  a special case;
+ *     `t`, `y`     t0 and the initial state for INITIAL_STATE; for
+ *                  FINAL_STATE the instant the object's propagation
+ *                  actually ended -- the trigger time / state of the
+ *                  stop-class event when one fired, the last
+ *                  integrator state otherwise.
+ *   A FINAL_STATE therefore always closes a run that terminated
+ *   normally; its absence after an INITIAL_STATE means the run died
+ *   (integrator failure, I/O error), which is itself worth reading.
  */
 typedef struct {
     /* ---- caller-set ---- */
