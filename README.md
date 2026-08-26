@@ -53,6 +53,7 @@ single dataset can drive many concurrent propagations without contention.
 | `sp3` | Reads IGS / MGEX SP3 precise orbits (multi-file, concatenated) and writes an ICRF position reference binary. |
 | `gps` / `glonass` | RINEX-NAV broadcast ephemeris to ICRF state. GPS broadcasts Keplerian elements, so the converter runs the IS-GPS-200 Kepler-with-corrections propagation (plus Remondi velocities); GLONASS broadcasts the state vector directly in PZ-90, so there the work is the terrestrial-to-inertial rotation including the `omega x r` term. |
 | `oem` | Reads CCSDS OEM text ephemerides (multi-file, overlap-deduplicated) into an ICRF state reference binary. |
+| `sgp4` | The analytic propagator that GP element sets (TLE / OMM) are fitted inside of. Their elements are *mean* elements of this theory, not an osculating state, so handing them to a numerical integrator is a physical error rather than an approximation: this module is the theory. Equations from Hoots & Roehrich, Spacetrack Report No. 3 (1980), with the corrections documented in Vallado et al., AIAA 2006-6753; output is TEME. Near-Earth branch only for now -- an element set whose period reaches 225 min is refused rather than answered by the wrong branch, which would be wrong by thousands of kilometres while looking healthy. Conformance is checked against the test cases published with AIAA 2006-6753: all nine near-Earth cases agree with the reference vectors to 1.5 mm over 149 points. |
 | `solver` | One-call wrappers around the integrator + force model context (e.g. propagate-until-end). |
 | `mission` | Top-level orchestration that ties a spacecraft, force model, integrator, and output stream into a single simulation. |
 | `io` | Buffered file I/O helpers for trajectory and diagnostic dumps. |
@@ -121,6 +122,7 @@ spody-core/
 │   ├── spody_mission.h
 │   ├── spody_nrlmsise00.h
 │   ├── spody_oem.h
+│   ├── spody_sgp4.h
 │   ├── spody_solver.h
 │   ├── spody_sp3.h
 │   ├── spody_time.h
