@@ -45,6 +45,7 @@ extern "C" {
 
     // Conversion units
 #define SECONDSxDAY 86400.0
+#define MINUTESxDAY 1440.0
 #define KM2M 1000.0
 #define M2KM 0.001
 #define M2AU 6.684587122268445e-12
@@ -53,6 +54,7 @@ extern "C" {
 #define AU2KM 149597870.7
 #define DEG2RAD (PI/180.0)
 #define RAD2DEG (180.0/PI)
+#define REVDAY2RADMIN (PI/720.0) // 2*PI/(24*60) = 2*PI/(1440) = PI/720
 
     // Angle conversions (sub-degree). Used by the IAU 2006 Earth
     // orientation pipeline where amplitudes are published in
@@ -186,6 +188,66 @@ extern "C" {
     // step starts from. 1.0 = the full straight-line excursion.
 #define SPODY_HG_ADAPTIVE_LN_INV_EPS  38.0
 #define SPODY_HG_ADAPTIVE_STEP_MARGIN 1.0
+
+    // SGP4 constants. (WGS-72)
+    // Source: Hoots & Roehrich, Spacetrack Report No. 3 (1980)
+#define SGP4_WGS72_MU   398600.8         // km^3/s^2
+#define SGP4_WGS72_RE   6378.135         // km
+#define SGP4_WGS72_J2   0.001082616
+#define SGP4_WGS72_J3  -0.00000253881
+#define SGP4_WGS72_J4  -0.00000165597
+    // Reference mean motion [Earth radii^1.5 / min], defined as
+    // 60/sqrt(SGP4_WGS72_RE^3/SGP4_WGS72_MU). The literal below is that
+    // expression in double precision, not the nine-digit
+    // 0.0743669161 printed in the report: rounding a derived quantity
+    // would leave ke, mu and Re mutually inconsistent. Recomputing
+    // the formula and recovering those nine digits is the check that
+    // this whole block was transcribed correctly.
+#define SGP4_WGS72_KE   0.0743669161331734
+#define SGP4_WGS72_K2     (0.5 * SGP4_WGS72_J2)
+#define SGP4_WGS72_K4     (-0.375 * SGP4_WGS72_J4)
+#define SGP4_WGS72_J3OJ2  (SGP4_WGS72_J3 / SGP4_WGS72_J2)
+    // Lane & Cranford power-law density profile: the two anchor
+    // altitudes above the surface [km]. The quantities actually used,
+    // ((q0-s)/RE)^4 and 1+s/RE, are perigee-dependent and therefore
+    // computed during initialisation, not here.
+#define SGP4_Q0_KM  120.0
+#define SGP4_S_KM   78.0
+
+#define SGP4_DEEP_SPACE_PERIOD_MIN   225.0
+#define SGP4_DEEP_SPACE_PERIOD_DAY  0.15625
+
+#define SGP4_SIMPLE_DRAG_PERIGEE_KM  220.0
+#define SGP4_S_MOD_PERIGEE_KM        156.0
+#define SGP4_S_LOW_PERIGEE_KM         98.0
+#define SGP4_S_FLOOR_KM               20.0
+
+#define SGP4_KEPLER_TOL       1.0e-12  /* STR#6 value; STR#3 used 1e-6 */
+#define SGP4_KEPLER_MAX_ITER  10       /* DO 130 I=1,10                */
+#define SGP4_KEPLER_MAX_STEP  0.95     /* Crawford (1995)              */
+    // Perturbed eccentricity, once drag has driven it past zero. Below the
+    // trap the model stops; between the trap and zero it is held at the
+    // floor. Both are fitted to the published vectors, which bracket the
+    // trap between -9.2e-4 and -1.21e-3 and put a four-decade minimum on
+    // the floor at 1e-6.
+#define SGP4_ECC_TRAP        -0.001
+#define SGP4_ECC_FLOOR        1.0e-6
+    // Below this, the two drag coefficients that divide by e0 (C3 and
+    // xmcof) are zeroed: the perigee of a circular orbit is not defined,
+    // and zero is the limit of what they contribute, not an approximation
+    // of it. Unlike the two above, this threshold is declared by the
+    // source rather than measured -- only one published case (28057,
+    // e0 = 8.84e-5) falls below it.
+#define SGP4_LOW_ECC  1.0e-4
+    // Refusal threshold on 1 + cos i0, the denominator of xlcof. Not a
+    // physical limit: cos i0 carries an absolute error of about one ulp of
+    // 1.0, so below this the difference has fewer than four significant
+    // digits and is noise however it is computed. It sits 0.29 arcsec from
+    // 180 deg, nine orders of magnitude past the most inclined object in
+    // any catalogue.
+#define SGP4_MIN_1P_COSI  1.0e-12 
+
+
 
 #ifdef __cplusplus
 }
