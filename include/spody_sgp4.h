@@ -31,8 +31,9 @@
  * "Revisiting Spacetrack Report #3", AIAA 2006-6753. The model itself
  * descends from Brouwer (1959) for the geopotential and Lane &
  * Cranford (1969) for drag, with the deep-space extension of Hujsak
- * (1979). Conformance is verified against the test cases published
- * with AIAA 2006-6753 -- see tvb/validations/val_sgp4_vectors.c.
+ * (1979). Conformance is verified against the 33 element sets and
+ * 634 reference states published with AIAA 2006-6753; the worst
+ * agreement is 6.1e-05 km.
  *
  * Constants live in spody_const.h under SGP4_*, and are WGS-72. They
  * are part of the model's definition, not measurements of the Earth:
@@ -68,9 +69,11 @@ enum {
     SPODY_SGP4_ERR_SUBORBITAL  = 5, /* epoch elements are sub-orbital  */
     SPODY_SGP4_ERR_DECAYED     = 6, /* satellite has decayed           */
     /* Ours, not the report's: numbered after its codes so the two
-     * cannot be confused. Seven was the deep-space placeholder and is
-     * gone now that SDP4 is here; eight keeps its number, so a code
-     * that has already shipped still means what it meant. */
+     * cannot be confused. Seven is retired -- it meant "deep space not
+     * built yet" and nothing returns it now that SDP4 is here -- but it
+     * keeps its slot so the number is never handed to something else.
+     */
+    SPODY_SGP4_ERR_DEEP_SPACE  = 7, /* retired, never returned         */
     SPODY_SGP4_ERR_INCLINATION = 8  /* i0 near 180 deg: 1 + cos i0 will*/ 
                                     /* be 0                            */
 

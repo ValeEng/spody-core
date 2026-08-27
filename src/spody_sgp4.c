@@ -14,35 +14,35 @@
  * limitations under the License.
  */
 /*
- * SGP4/SDP4.
+ * SGP4/SDP4: the analytic theory that GP element sets (TLE, OMM) are
+ * fitted inside of. Their elements are mean elements of this theory,
+ * so this file is not an approximation of their motion -- it is the
+ * definition of it, and anything else fed the same numbers is simply
+ * answering a different question.
  *
- * This file exists so that the conformance harness
- * (tvb/validations/val_sgp4_vectors.c) compiles, runs, and reports how
- * far every published test case is from its reference value. Right now
- * that distance is "the whole orbit", which is the correct starting
- * measurement: the oracle is in place before the model, so every
- * equation added from here on has an immediate verdict.
+ * Equations from Hoots & Roehrich, Spacetrack Report No. 3 (1980).
+ * Where the published verification vectors demand a departure from the
+ * report, the departure is made and argued at the line that makes it,
+ * with the reasoning in Vallado et al., AIAA 2006-6753 -- except twice,
+ * where the vectors and that paper disagree and the vectors win: the
+ * Greenwich angle at epoch, and the recovery of the semimajor axis.
  *
- * Order of work, from the equations in Spacetrack Report No. 3:
+ * Two branches, chosen once at initialisation from the orbital period.
+ * Below 225 minutes the near-Earth model; at or above it SDP4, which
+ * adds the lunisolar secular and periodic terms and, inside the two
+ * resonance bands, a Taylor integration of the mean longitude. It is a
+ * different model rather than the same one with extra terms, which is
+ * why the choice is made once and stored rather than re-tested.
  *
- *   1. Recover the original mean motion and semimajor axis from the
- *      Brouwer elements (a1, delta1, a0, delta0, n0'', a0''). This is
- *      the Kozai correction, and it is the only piece that can be
- *      checked without the rest of the model working.
- *   2. Perigee-dependent drag setup: s and (q0-s)^4 modified below
- *      156 km and again below 98 km, and the simplified branch below
- *      220 km. Thresholds go into spody_const.h *with* this code, not
- *      before it -- a constant no code reads is a constant nobody has
- *      verified.
- *   3. Branch selection: period >= 225 min is deep space and a
- *      different model, not this one with extra terms.
- *   4. Near-Earth secular + periodic terms, then Kepler.
- *   5. Deep space: lunisolar terms, then the 24 h and 12 h resonances.
+ * Everything runs in the report's units -- distance in Earth radii,
+ * time in minutes -- so that ke alone carries the gravitational
+ * parameter and the drag coefficients keep the magnitudes the report
+ * prints. Kilometres appear once, in the last lines of spody_sgp4_at.
  *
- * Until (5) exists, a deep-space element set must fail loudly rather
- * than be propagated by the near-Earth branch: silently returning
- * near-Earth numbers for a GEO or a GNSS satellite is wrong by
- * thousands of kilometres while looking entirely healthy.
+ * Output is TEME, the frame the theory is defined in. Rotating it
+ * elsewhere is left to the caller on purpose: a GP state carries the
+ * accuracy of a fitted analytic theory, and quietly delivering it as
+ * ICRF would hide which of the two the number came from.
  */
 #include <stddef.h>
 #include <math.h>
