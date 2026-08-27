@@ -74,13 +74,17 @@ static void dpinit(spody_sgp4_sat *sat)
     double day  = ds50 + SGP4_DAY_1950_TO_1900;
 
     /* STR#3 gets this angle from a linear expression in days since
-     * 1950. The code that produced the verification vectors uses the
-     * IAU 1982 GMST instead, and the difference is not cosmetic: thgr
+     * 1950, and that is the one expression the verification vectors
+     * will not tolerate: it sits 3.9e-04 deg from sidereal time, which
      * cancels between xlamo and temp everywhere except inside
-     * sin(xli - fasx2), where it fixes the phase of the resonance
-     * forcing and the integrator multiplies it. Written flat rather
-     * than nested, because Horner's form moves the result by 1.8e-12
-     * rad and the reference does not use it. */
+     * sin(xli - fasx2), where it sets the phase of the resonance
+     * forcing and the integrator multiplies it. AIAA 2006-6753 section
+     * F lists three expressions and warns about exactly this. The
+     * vectors come from the 1970 one; the IAU 1982 GMST below agrees
+     * with it to 3e-09 deg, a thousand times under anything measurable
+     * here, and is the better expression to keep. Written flat rather
+     * than nested: Horner's form moves the result by 1.8e-12 rad. */
+
     double jd   = el->epoch_mjd + JD_MJD_EPOCH;
     double tut1 = (jd - JD_J2000) / DAYS_PER_JULIAN_CY;
     double gmst = SGP4_GMST_C0 + SGP4_GMST_C1 * tut1

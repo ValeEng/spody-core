@@ -258,12 +258,14 @@ extern "C" {
 
     // Greenwich mean sidereal time at epoch, IAU 1982 (Astronomical
     // Almanac): seconds of time as a cubic in Julian centuries of UT1
-    // past J2000, 240 seconds of time to the degree. STR#3 instead
-    // carries a linear expression in days since 1950,
-    // 1.72944494 + 6.3003880987 DS50, and the two differ by 3.9e-4 deg
-    // -- negligible for the angle itself, three orders of magnitude for
-    // a resonant element set, because this angle also sets the phase of
-    // the resonance forcing. Use JD_J2000, JD_MJD_EPOCH and
+    // past J2000, 240 seconds of time to the degree.
+    // STR#3 instead carries a linear expression in days since 1950,
+    // 1.72944494 + 6.3003880987 DS50, which sits 3.9e-4 deg from this
+    // one -- negligible for the angle itself, three orders of magnitude
+    // for a resonant element set, because the angle also sets the phase
+    // of the resonance forcing. AIAA 2006-6753 section F gives a third,
+    // from 1970, agreeing with this one to 3e-9 deg: either will do,
+    // the 1950 form will not. Use JD_J2000, JD_MJD_EPOCH and
     // DAYS_PER_JULIAN_CY from the top of this file for the rest.
 #define SGP4_GMST_C0           67310.54841
 #define SGP4_GMST_C1           (876600.0 * 3600.0 + 8640184.812866)
