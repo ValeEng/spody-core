@@ -310,7 +310,14 @@ static void dpinit(spody_sgp4_sat *sat)
             g322 = -18.9068 + 109.7927 * eq - 214.6334 * eqsq + 146.5816 * eoc;
             g410 = -41.122 + 242.694 * eq - 471.094 * eqsq + 313.953 * eoc;
             g422 = -146.407 + 841.880 * eq - 1629.014 * eqsq + 1083.435 * eoc;
-            g520 = -532.114 + 3017.977 * eq - 5740.0 * eqsq + 3708.276 * eoc;
+            /* The report prints -5740 here: the only coefficient of the
+             * twenty-eight in this block written without decimals, and
+             * the value the reference vectors are built on is
+             * -5740.032. This branch is reached below e = 0.65, which
+             * one published element set exercises and no other, so the
+             * three missing digits are worth a factor 466 on it and
+             * nothing anywhere else. */
+            g520 = -532.114 + 3017.977 * eq - 5740.032 * eqsq + 3708.276 * eoc;
         } else {
             g211 = -72.099 + 331.819 * eq - 508.738 * eqsq + 266.724 * eoc;
             g310 = -346.844 + 1582.851 * eq - 2415.925 * eqsq + 1246.113 * eoc;

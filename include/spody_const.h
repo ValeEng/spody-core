@@ -358,12 +358,16 @@ extern "C" {
 #define SGP4_FASX4  2.8843198
 #define SGP4_FASX6  0.37448087
 
-    // Earth rotation rate [rad/min]. NOT the same number as
-    // (6.3003881 rad/day)/1440: the report carries two values that differ
-    // in the seventh digit (6.3003875 against 6.3003881 rad/day), one
-    // for the angle at epoch and one for its rate in the resonance.
-    // Each stays where the report put it.
-#define SGP4_THDT  4.3752691e-3
+    // Earth rotation rate [rad/min] = 7.29211514668855e-5 rad/s, the
+    // nominal rate; the report rounds it to eight digits as 4.3752691e-3
+    // and that rounding was invisible for as long as the angle at epoch
+    // came from the report too. It is not invisible now. Both this rate
+    // and that angle enter sin(xli - fasx2), where they set the phase of
+    // the resonance forcing, and a phase error there is integrated
+    // rather than cancelled: eight digits cost a factor of four hundred
+    // on a 24 h resonant element set. The eight-digit form survives as
+    // the thing to check this against, not as the thing to compute with.
+#define SGP4_THDT  4.37526908801129966e-3
 
     // Resonance integration: a twelve-hour Taylor step from epoch, and
     // the half-square that goes with it. STEP2 is written out rather

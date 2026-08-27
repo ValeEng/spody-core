@@ -33,7 +33,7 @@
  * Cranford (1969) for drag, with the deep-space extension of Hujsak
  * (1979). Conformance is verified against the 33 element sets and
  * 634 reference states published with AIAA 2006-6753; the worst
- * agreement is 6.1e-05 km.
+ * agreement is 1.8e-06 km.
  *
  * Constants live in spody_const.h under SGP4_*, and are WGS-72. They
  * are part of the model's definition, not measurements of the Earth:
