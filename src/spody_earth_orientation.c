@@ -478,7 +478,7 @@ int spody_iau2006_xys(const MappedIAU2006 *map, double t_tt_cy,
 }
 
 /* ======================================================================
- * Section 4 -- Earth Rotation Angle
+ * Section 4 -- Earth rotation: ERA (CIO-based) and GMST (equinox-based).
  *
  * IERS TN 36 eq. (5.15), Capitaine et al. 2000:
  *     ERA(Tu) = 2*pi * (0.7790572732640 + 1.00273781191135448 * Tu)
@@ -492,6 +492,15 @@ double spody_iau2006_era(double jd_ut1) {
     double frac = 0.7790572732640 + Tu
                 + Tu * 0.00273781191135448;
     return _fold_2pi(TWO_PI * frac);
+}
+
+double spody_gmst1982(double jd_ut1) {
+    double t = (jd_ut1 - JD_J2000) / DAYS_PER_JULIAN_CY;
+    double gmst_sec = GMST_C0 + GMST_C1 * t
+                    + GMST_C2 * t * t
+                    + GMST_C3 * t * t * t;
+
+    return _fold_2pi(gmst_sec * DEG2RAD / GMST_SEC_PER_DEG);
 }
 
 /* ======================================================================
@@ -539,7 +548,7 @@ static void _R3(double a, double R[3][3]) {
 void spody_iau2006_polar_motion(double t_tt_cy, double xp_rad, double yp_rad,
                                   double W[3][3]) {
     /* TIO locator: -47 uas / century, eq. (5.13). */
-    double sp_rad = -47.0 * t_tt_cy * UAS2RAD;
+    double sp_rad = TIO_LOCATOR_UAS_PER_CY * t_tt_cy * UAS2RAD;
 
     /* IERS TN 36 eq. (5.3) / SOFA iauPom00:
      *   W(t) = R3(-s'(t)) . R2(-x_p(t)) . R1(-y_p(t))
@@ -729,4 +738,56 @@ void spody_bf_rotation_earth(const ForceModelContext *ctx, double et,
     _mat33_mul(W, R3_plus_era, WR);
     _mat33_mul(WR, Q_T, R_icrf_to_bf);
     _mat33_transpose(R_icrf_to_bf, R_bf_to_icrf);
+}
+
+/* ======================================================================
+ * Section 7 -- TEME <-> ICRF, the frame a GP element set arrives in
+ * ====================================================================== */
+
+void spody_teme2icrf_rotation(const ForceModelContext *ctx, double et,
+                              double R_teme_to_icrf[3][3],
+                              double R_icrf_to_teme[3][3]) {
+    if (!ctx || !ctx->eop || !ctx->iau2006) {
+        _identity(R_teme_to_icrf, R_icrf_to_teme);
+        return;
+    }
+
+    double xp_arcsec, yp_arcsec, dut1_sec, dX_mas, dY_mas;
+    if (spody_interpolate_eop(ctx->eop, et, &xp_arcsec, &yp_arcsec,
+                              &dut1_sec, &dX_mas, &dY_mas) != 0) {
+        _identity(R_teme_to_icrf, R_icrf_to_teme);
+        return;
+    }
+
+    /* TT Julian centuries past J2000 (TDB-TT negligible at our target). */
+    double t_tt_cy = (et / SECONDSxDAY) / DAYS_PER_JULIAN_CY;
+
+    double X, Y, s;
+    spody_iau2006_xys_interp(ctx->iau2006, t_tt_cy, &X, &Y, &s);
+    X += dX_mas * MAS2RAD;
+    Y += dY_mas * MAS2RAD;
+
+    double Q[3][3];
+    _build_Q(X, Y, s, Q);
+
+    /* GMST and ERA are the same angle from two origins; their
+     * difference is the equation of the origins, and it is all that
+     * survives once polar motion has cancelled against itself. The
+     * TIO locator is what remains between the classical PEF and the
+     * CIO-based TIRS: 12 uas in 2026, and it is subtracted here rather
+     * than waved away because measuring against astropy costs the same
+     * either way and this took the residual about the pole axis from
+     * 9.1 to 2.7 uas rms. */
+    double jd_ut1 = _jd_ut1_from_et(et, dut1_sec);
+    double sp     = TIO_LOCATOR_UAS_PER_CY * t_tt_cy * UAS2RAD;
+    double eo     = spody_gmst1982(jd_ut1) - spody_iau2006_era(jd_ut1) - sp;
+
+    double R3_eo[3][3];
+    _R3(eo, R3_eo);
+
+    /* _build_Q is oriented CIRS -> GCRS, so it multiplies from the
+     * left with no transpose here -- unlike the ITRF chain above, which
+     * needs Q^T because SOFA's c2ixys runs the other way. */
+    _mat33_mul(Q, R3_eo, R_teme_to_icrf);
+    _mat33_transpose(R_teme_to_icrf, R_icrf_to_teme);
 }

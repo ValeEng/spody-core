@@ -69,6 +69,20 @@ extern "C" {
     // argument polynomials and the precession-nutation series.
 #define DAYS_PER_JULIAN_CY 36525.0
 
+    // Greenwich Mean Sidereal Time, IAU 1982 (Astronomical Almanac):
+    // seconds of time as a cubic in Julian centuries of UT1 past
+    // J2000, 240 seconds of time to the degree. The equinox-based
+    // sibling of the Earth Rotation Angle, which is the same physical
+    // angle measured from the CIO instead; the two differ by the
+    // equation of the origins. Evaluated flat rather than nested:
+    // Horner's form moves the result by 1.8e-12 rad, and the
+    // implementations this is checked against do not use it.
+#define GMST_C0           67310.54841
+#define GMST_C1           (876600.0 * 3600.0 + 8640184.812866)
+#define GMST_C2           0.093104
+#define GMST_C3          -6.2e-6
+#define GMST_SEC_PER_DEG  240.0
+
     // GNSS time-scale offsets. GPS time is locked to TAI - 19 s
     // exactly since 1980-01-06, so the bridge to TT (= TAI + 32.184)
     // is a single constant -- no leap-second table required. GLONASS
@@ -101,6 +115,11 @@ extern "C" {
     // (GNSS broadcast ECEF -> ICRF velocity).
 #define EARTH_ROT_RATE_RADPS 7.2921151467e-5
 
+    // TIO locator s'(t) = -47 uas per Julian century (IERS TN 36 eq.
+    // 5.13). It appears twice: inside the polar-motion matrix, and as
+    // the one term separating the classical pseudo-earth-fixed frame
+    // from the CIO-based terrestrial intermediate one.
+#define TIO_LOCATOR_UAS_PER_CY  (-47.0)
 
     // Gravitational parameters GM [km^3/s^2].
     // Alternative published values (DE440 headers, IAU 2015 nominal)
@@ -255,24 +274,6 @@ extern "C" {
     // polynomials below count from 1900 Jan 0.5.
 #define SGP4_MJD_1950          33281.0
 #define SGP4_DAY_1950_TO_1900  18261.5
-
-    // Greenwich mean sidereal time at epoch, IAU 1982 (Astronomical
-    // Almanac): seconds of time as a cubic in Julian centuries of UT1
-    // past J2000, 240 seconds of time to the degree.
-    // STR#3 instead carries a linear expression in days since 1950,
-    // 1.72944494 + 6.3003880987 DS50, which sits 3.9e-4 deg from this
-    // one -- negligible for the angle itself, three orders of magnitude
-    // for a resonant element set, because the angle also sets the phase
-    // of the resonance forcing. AIAA 2006-6753 section F gives a third,
-    // from 1970, agreeing with this one to 3e-9 deg: either will do,
-    // the 1950 form will not. Use JD_J2000, JD_MJD_EPOCH and
-    // DAYS_PER_JULIAN_CY from the top of this file for the rest.
-#define SGP4_GMST_C0           67310.54841
-#define SGP4_GMST_C1           (876600.0 * 3600.0 + 8640184.812866)
-#define SGP4_GMST_C2           0.093104
-#define SGP4_GMST_C3          -6.2e-6
-#define SGP4_GMST_SEC_PER_DEG  240.0
-
 
     // Lunar and solar mean elements, linear in days since 1900 Jan 0.5
     // [rad, rad/day]. Every rate is a period that checks on its own:

@@ -49,6 +49,7 @@
 
 #include "spody_sgp4.h"
 #include "spody_const.h"
+#include "spody_earth_orientation.h"
 
 /* Angle reduced to [0, 2pi). STR#3 calls this FMOD2P. */
 static double fmod2p(double x)
@@ -73,25 +74,15 @@ static void dpinit(spody_sgp4_sat *sat)
     double ds50 = el->epoch_mjd - SGP4_MJD_1950;
     double day  = ds50 + SGP4_DAY_1950_TO_1900;
 
-    /* STR#3 gets this angle from a linear expression in days since
-     * 1950, and that is the one expression the verification vectors
-     * will not tolerate: it sits 3.9e-04 deg from sidereal time, which
-     * cancels between xlamo and temp everywhere except inside
+    /* The TLE epoch goes in unadjusted: no dUT1. That is what produced
+     * the element set, and STR#3's own linear expression in days since
+     * 1950 -- 3.9e-04 deg away from sidereal time -- is the one thing
+     * here the verification vectors will not tolerate, because this
+     * angle cancels between xlamo and temp everywhere except inside
      * sin(xli - fasx2), where it sets the phase of the resonance
-     * forcing and the integrator multiplies it. AIAA 2006-6753 section
-     * F lists three expressions and warns about exactly this. The
-     * vectors come from the 1970 one; the IAU 1982 GMST below agrees
-     * with it to 3e-09 deg, a thousand times under anything measurable
-     * here, and is the better expression to keep. Written flat rather
-     * than nested: Horner's form moves the result by 1.8e-12 rad. */
+     * forcing and the integrator multiplies it. */
+    dp->thgr = spody_gmst1982(el->epoch_mjd + JD_MJD_EPOCH);
 
-    double jd   = el->epoch_mjd + JD_MJD_EPOCH;
-    double tut1 = (jd - JD_J2000) / DAYS_PER_JULIAN_CY;
-    double gmst = SGP4_GMST_C0 + SGP4_GMST_C1 * tut1
-                + SGP4_GMST_C2 * tut1 * tut1
-                + SGP4_GMST_C3 * tut1 * tut1 * tut1;
-
-    dp->thgr = fmod2p(gmst * DEG2RAD / SGP4_GMST_SEC_PER_DEG);
 
     dp->xnq    = sat->n0dp;
     dp->xqncl  = el->i0_deg * DEG2RAD;

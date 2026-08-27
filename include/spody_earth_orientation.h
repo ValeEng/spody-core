@@ -228,6 +228,26 @@ int spody_iau2006_xys_interp(MappedIAU2006 *map, double t_tt_cy,
  * Returns ERA in radians, reduced to [0, 2*pi). */
 double spody_iau2006_era(double jd_ut1);
 
+/* Greenwich Mean Sidereal Time, IAU 1982 (Astronomical Almanac):
+ *
+ *   GMST[s] = 67310.54841 + (876600*3600 + 8640184.812866) * T
+ *           + 0.093104 * T^2 - 6.2e-6 * T^3
+ *
+ * with T = (JD(UT1) - JD_J2000) / 36525 and 240 seconds of time to the
+ * degree. Same physical angle as spody_iau2006_era, measured from the
+ * equinox instead of the CIO.
+ *
+ * The caller decides what "UT1" means, and the two callers here mean
+ * different things on purpose. A frame conversion passes a true UT1
+ * built from the EOP table. SGP4 passes the TLE epoch unadjusted,
+ * because that is what the element set was fitted against and what the
+ * published verification vectors reproduce: feeding it dUT1 would be
+ * more correct as time and less correct as an answer. This is not an
+ * inconsistency to tidy away.
+ *
+ * Returns GMST in radians, reduced to [0, 2*pi). */
+double spody_gmst1982(double jd_ut1);
+
 /* Build the polar-motion matrix W(t):
  *
  *   W = R3(-s'(t)) . R2(xp) . R1(yp)
@@ -268,6 +288,48 @@ typedef struct ForceModelContext ForceModelContext;
 void spody_bf_rotation_earth(const ForceModelContext *ctx, double et,
                               double R_icrf_to_bf[3][3],
                               double R_bf_to_icrf[3][3]);
+
+/* Rotation between TEME and ICRF (GCRS) at the given ET.
+ *
+ * TEME -- true equator, mean equinox of date -- is the frame SGP4 is
+ * defined in, and the only frame a GP element set can be propagated
+ * into. It is quasi-inertial: it does not turn with the Earth, so the
+ * same matrix rotates position and velocity and there is no
+ * omega x r term. What little it does turn is precession, some
+ * 7.7e-12 rad/s.
+ *
+ * The chain collapses. Writing the standard one as
+ *
+ *   ITRS <- GCRS = W . R3(ERA) . Q^T          (SOFA iauC2t06a)
+ *
+ * and the classical entry as PEF <- TEME = R3(GMST) -- GMST and not
+ * GAST, because TEME's origin is the MEAN equinox -- and taking the
+ * pseudo-earth-fixed frame for the terrestrial intermediate one:
+ *
+ *   GCRS <- TEME = Q . R3(-ERA) . W^T . W . R3(GMST)
+ *                = Q . R3(GMST - ERA)
+ *
+ * Polar motion cancels outright: both routes pass through the same
+ * intermediate frame, so W meets its own transpose. xp and yp are
+ * still read from the EOP table here, and still unused, because the
+ * dUT1 that comes with them is not.
+ *
+ * What PEF and TIRS do not share is the TIO locator s', -47 uas per
+ * century, so the angle actually carried is GMST - ERA - s'. Checked
+ * against astropy on eight epochs between 2019 and 2025: the residual
+ * about the pole axis is 9.1 uas rms without that term and 2.7 with
+ * it, and the 2.7 that remain are dUT1 interpolated differently on the
+ * two sides. The residual in the other two axes is larger and is not
+ * ours -- it tracks the dX/dY celestial-pole offsets, which this
+ * function applies and astropy does not.
+ *
+ * Same contract as spody_bf_rotation_earth: ctx->eop and ctx->iau2006
+ * must both be non-NULL, and both matrices come back as the identity
+ * if they are not or if the EOP interpolation fails. */
+void spody_teme2icrf_rotation(const ForceModelContext *ctx, double et,
+                              double R_teme_to_icrf[3][3],
+                              double R_icrf_to_teme[3][3]);
+
 
 #ifdef __cplusplus
 }
