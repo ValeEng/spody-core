@@ -203,7 +203,7 @@ extern "C" {
     // would leave ke, mu and Re mutually inconsistent. Recomputing
     // the formula and recovering those nine digits is the check that
     // this whole block was transcribed correctly.
-#define SGP4_WGS72_KE   0.0743669161331734
+#define SGP4_WGS72_KE   0.07436691613317342
 #define SGP4_WGS72_K2     (0.5 * SGP4_WGS72_J2)
 #define SGP4_WGS72_K4     (-0.375 * SGP4_WGS72_J4)
 #define SGP4_WGS72_J3OJ2  (SGP4_WGS72_J3 / SGP4_WGS72_J2)
@@ -225,6 +225,7 @@ extern "C" {
 #define SGP4_KEPLER_TOL       1.0e-12  /* STR#6 value; STR#3 used 1e-6 */
 #define SGP4_KEPLER_MAX_ITER  10       /* DO 130 I=1,10                */
 #define SGP4_KEPLER_MAX_STEP  0.95     /* Crawford (1995)              */
+
     // Perturbed eccentricity, once drag has driven it past zero. Below the
     // trap the model stops; between the trap and zero it is held at the
     // floor. Both are fitted to the published vectors, which bracket the
@@ -232,6 +233,7 @@ extern "C" {
     // the floor at 1e-6.
 #define SGP4_ECC_TRAP        -0.001
 #define SGP4_ECC_FLOOR        1.0e-6
+
     // Below this, the two drag coefficients that divide by e0 (C3 and
     // xmcof) are zeroed: the perigee of a circular orbit is not defined,
     // and zero is the limit of what they contribute, not an approximation
@@ -239,6 +241,7 @@ extern "C" {
     // source rather than measured -- only one published case (28057,
     // e0 = 8.84e-5) falls below it.
 #define SGP4_LOW_ECC  1.0e-4
+
     // Refusal threshold on 1 + cos i0, the denominator of xlcof. Not a
     // physical limit: cos i0 carries an absolute error of about one ulp of
     // 1.0, so below this the difference has fewer than four significant
@@ -247,7 +250,133 @@ extern "C" {
     // any catalogue.
 #define SGP4_MIN_1P_COSI  1.0e-12 
 
+    // Deep space: the epochs the lunar and solar mean elements are
+    // tabulated against. DS50 counts days from 1950 Jan 0.0; the
+    // polynomials below count from 1900 Jan 0.5.
+#define SGP4_MJD_1950          33281.0
+#define SGP4_DAY_1950_TO_1900  18261.5
 
+    // Greenwich mean sidereal time at epoch, IAU 1982 (Astronomical
+    // Almanac): seconds of time as a cubic in Julian centuries of UT1
+    // past J2000, 240 seconds of time to the degree. STR#3 instead
+    // carries a linear expression in days since 1950,
+    // 1.72944494 + 6.3003880987 DS50, and the two differ by 3.9e-4 deg
+    // -- negligible for the angle itself, three orders of magnitude for
+    // a resonant element set, because this angle also sets the phase of
+    // the resonance forcing. Use JD_J2000, JD_MJD_EPOCH and
+    // DAYS_PER_JULIAN_CY from the top of this file for the rest.
+#define SGP4_GMST_C0           67310.54841
+#define SGP4_GMST_C1           (876600.0 * 3600.0 + 8640184.812866)
+#define SGP4_GMST_C2           0.093104
+#define SGP4_GMST_C3          -6.2e-6
+#define SGP4_GMST_SEC_PER_DEG  240.0
+
+
+    // Lunar and solar mean elements, linear in days since 1900 Jan 0.5
+    // [rad, rad/day]. Every rate is a period that checks on its own:
+    // the node regresses in 18.61 y, the mean longitude runs the
+    // 27.322 d sidereal month, perigee circulates in 8.85 y, and the
+    // solar anomaly is the 365.26 d year. Longitude minus perigee
+    // reproduces ZNL to eight digits, which is how this block was
+    // verified without leaving the page.
+#define SGP4_MOON_NODE_0     4.5236020
+#define SGP4_MOON_NODE_DOT  (-9.2422029e-4)
+#define SGP4_MOON_LON_0      4.7199672
+#define SGP4_MOON_LON_DOT    0.22997150
+#define SGP4_MOON_PERI_0     5.8351514
+#define SGP4_MOON_PERI_DOT   0.0019443680
+#define SGP4_SUN_ANOM_0      6.2565837
+#define SGP4_SUN_ANOM_DOT    0.017201977
+
+    // Fixed geometry. cos i of the Moon on the equator oscillates as
+    // 0.91375164 - 0.03568096 cos(node), i.e. 18.30 to 28.59 deg;
+    // 0.089683511 is sin of its 5.145 deg tilt to the ecliptic, and
+    // the obliquity pair is sin/cos of 23.4441 deg.
+#define SGP4_MOON_COSI_0    0.91375164
+#define SGP4_MOON_COSI_AMP  0.03568096
+#define SGP4_SIN_I_MOON     0.089683511
+#define SGP4_SIN_OBLIQ      0.39785416
+#define SGP4_COS_OBLIQ      0.91744867
+
+    // Third-body disturbing amplitudes and mean motions. CC x ZN is the
+    // amplitude actually used: 3.568e-11 for the Sun against 7.596e-11
+    // for the Moon, a ratio of 2.13 against the 2.18 of GM/r^3. These
+    // are fitted coefficients rather than derived ones, but the ratio
+    // is the cheapest check that neither pair was mistyped.
+#define SGP4_ZNS    1.19459e-5       // [rad/min]
+#define SGP4_C1SS   2.9864797e-6
+#define SGP4_ZES    0.01675          // Earth orbit eccentricity
+#define SGP4_ZNL    1.5835218e-4     // [rad/min]
+#define SGP4_C1L    4.7968065e-7
+#define SGP4_ZEL    0.05490          // lunar orbit eccentricity
+
+    // The Sun's argument of perigee: atan2 of the pair is 281.22 deg,
+    // the longitude of perihelion.
+#define SGP4_SUN_SING  (-0.98088458)
+#define SGP4_SUN_COSG    0.1945905
+
+    // Below three degrees the node rate is dropped: it divides by
+    // sin i0, and a near-equatorial node carries nothing to divide.
+#define SGP4_LOW_INCL   5.2359877e-2   // [rad] = 3.0000 deg
+
+    // Below this the node and the argument of perigee are not
+    // separately meaningful, and the lunisolar perturbation is applied
+    // through Lyddane's non-singular pair instead. Tested against the
+    // inclination at epoch, never the perturbed one: otherwise a
+    // satellite can change theory halfway through a propagation.
+#define SGP4_LYDDANE_INCL   0.2      // [rad] = 11.4592 deg
+
+    // Resonance bands, on the recovered mean motion [rad/min]: the 24 h
+    // window is 0.800 to 1.200 rev/day, the 12 h one 1.893 to 2.118
+    // rev/day, and the latter additionally needs e >= 0.5.
+#define SGP4_RES_24H_LO   0.0034906585
+#define SGP4_RES_24H_HI   0.0052359877
+#define SGP4_RES_12H_LO   8.26e-3
+#define SGP4_RES_12H_HI   9.24e-3
+#define SGP4_RES_12H_ECC  0.5
+
+    // Eccentricity branch points of the 12 h G polynomials.
+#define SGP4_G_ECC_1  0.65
+#define SGP4_G_ECC_2  0.715
+#define SGP4_G_ECC_3  0.7
+
+    // Tesseral harmonic amplitudes. Q22 and ROOT22 carry the same
+    // number under two names in the report; kept apart because they
+    // enter two different resonances and nothing guarantees they stay
+    // equal if either is ever refined.
+#define SGP4_Q22     1.7891679e-6
+#define SGP4_Q31     2.1460748e-6
+#define SGP4_Q33     2.2123015e-7
+#define SGP4_ROOT22  1.7891679e-6
+#define SGP4_ROOT32  3.7393792e-7
+#define SGP4_ROOT44  7.3636953e-9
+#define SGP4_ROOT52  1.1428639e-7
+#define SGP4_ROOT54  2.1765803e-9
+
+    // Phases of the three synchronous tesseral terms [rad].
+#define SGP4_FASX2  0.13130908
+#define SGP4_FASX4  2.8843198
+#define SGP4_FASX6  0.37448087
+
+    // Earth rotation rate [rad/min]. NOT the same number as
+    // (6.3003881 rad/day)/1440: the report carries two values that differ
+    // in the seventh digit (6.3003875 against 6.3003881 rad/day), one
+    // for the angle at epoch and one for its rate in the resonance.
+    // Each stays where the report put it.
+#define SGP4_THDT  4.3752691e-3
+
+    // Resonance integration: a twelve-hour Taylor step from epoch, and
+    // the half-square that goes with it. STEP2 is written out rather
+    // than computed because the report writes it out.
+#define SGP4_RES_STEP   720.0
+#define SGP4_RES_STEP2  259200.0      // 720^2 / 2
+
+    // Phases of the resonant tesseral terms [rad].
+#define SGP4_G22  5.7686396
+#define SGP4_G32  0.95240898
+#define SGP4_G44  1.8014998
+#define SGP4_G52  1.0508330
+#define SGP4_G54  4.4108898
 
 #ifdef __cplusplus
 }

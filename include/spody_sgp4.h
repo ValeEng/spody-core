@@ -68,8 +68,9 @@ enum {
     SPODY_SGP4_ERR_SUBORBITAL  = 5, /* epoch elements are sub-orbital  */
     SPODY_SGP4_ERR_DECAYED     = 6, /* satellite has decayed           */
     /* Ours, not the report's: numbered after its codes so the two
-     * cannot be confused. Temporary -- it disappears when SDP4 lands. */
-    SPODY_SGP4_ERR_DEEP_SPACE  = 7, /* deep-space branch not built yet */
+     * cannot be confused. Seven was the deep-space placeholder and is
+     * gone now that SDP4 is here; eight keeps its number, so a code
+     * that has already shipped still means what it meant. */
     SPODY_SGP4_ERR_INCLINATION = 8  /* i0 near 180 deg: 1 + cos i0 will*/ 
                                     /* be 0                            */
 
@@ -100,6 +101,38 @@ typedef struct {
     double bstar;        /* drag term [1/(Earth radii)]               */
 } spody_sgp4_elements;
 
+/* Everything the deep-space branch precomputes once per element set.
+ * Nested rather than appended so a near-Earth reader can skip it in one
+ * jump, and always present rather than allocated: it costs about 350
+ * bytes on an element set that never uses it, against a pointer, a
+ * lifetime and a failure mode it would otherwise cost on every one.
+ * Filled by the deep-space initialisation, read by the two deep-space
+ * perturbation steps; nothing outside this module touches it. */
+typedef struct {
+    double thgr;                 /* Greenwich sidereal angle at epoch  */
+    double xnq, xqncl, omegaq;   /* n0'', i0, w0 frozen at epoch       */
+
+    double ssl, ssg, ssh, sse, ssi;          /* lunisolar secular      */
+    double se2, se3, si2, si3, sl2, sl3, sl4;      /* lunisolar        */
+    double sgh2, sgh3, sgh4, sh2, sh3;             /* periodic         */
+    /* The same twelve quantities for the Moon. The report leaves them
+     * in the working names because the lunar pass runs second; naming
+     * them apart is the difference between reading DPPER and guessing
+     * at it. */
+    double ee2, e3, xi2, xi3, xl2, xl3, xl4;
+    double xgh2, xgh3, xgh4, xh2, xh3;
+    double zmos, zmol;           /* solar and lunar mean anomalies     */
+
+    int    resonant;             /* IRESFL                             */
+    int    synchronous;          /* ISYNFL: the 24 h kind              */
+    double del1, del2, del3;                 /* 24 h amplitudes        */
+    double fasx2, fasx4, fasx6;              /* 24 h phases            */
+    double d2201, d2211, d3210, d3222;       /* 12 h                   */
+    double d4410, d4422, d5220, d5232;
+    double d5421, d5433;
+    double xlamo, xfact;         /* integration start and frequency    */
+} spody_sgp4_deep;
+
 /* Everything the model precomputes once per element set.
  *
  * Callers set nothing here and read nothing here: it is filled by
@@ -115,7 +148,7 @@ typedef struct {
 typedef struct {
     /* ---- as supplied ---- */
     spody_sgp4_elements el;
-
+    spody_sgp4_deep deep;
     /* ---- implementation-owned; do not read from outside ---- */
     double n0dp;            /* recovered mean motion [rad/min]          | dp = double prime */
     double a0dp;            /* recovered semimajor axis [Earth radii]   | dp = double prime */
