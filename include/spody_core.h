@@ -41,6 +41,7 @@ extern "C" {
 #include "spody_math.h"
 #include "spody_interp.h"
 #include "spody_const.h"
+#include "spody_gp.h"
 
 
 #ifdef __cplusplus
