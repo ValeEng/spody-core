@@ -48,6 +48,41 @@ option(SPODY_ENABLE_OMP_SIMD
 option(SPODY_VEC_REPORT
     "Emit auto-vectorization diagnostic (MSVC: /Qvec-report:2, GCC/Clang: -fopt-info-vec[-missed])" OFF)
 
+# AVX2 (256-bit) instead of the x86-64 baseline's SSE2 (128-bit) for the
+# library's hot loops. Measured on the harmonics kernel with GCC 15,
+# GRGM1200A, ns per call of the _hpc variant:
+#
+#     N        baseline   AVX2     gain
+#     50         2580      2300    1.12x
+#     100        9300      6900    1.35x
+#     200       35333     23333    1.51x
+#
+# Two reasons it is OFF by default, and both are the caller's decision
+# rather than ours:
+#
+#   1. A binary built this way needs an AVX2 machine (Intel Haswell
+#      2013, AMD Excavator 2015). On anything older it does not run
+#      slowly, it dies on an illegal instruction. A distributed bundle
+#      inherits that floor.
+#   2. It moves the answer by a few ULP. The reference kernel is
+#      unaffected -- same operations, wider registers -- but the _hpc
+#      kernel's vectorised reduction sums four lanes where it summed
+#      two, and a different summation order is a different rounding.
+#      Measured at 1-4 ULP of the acceleration (~1e-22 km/s^2), which is
+#      physically nothing and is still enough to break a bit-identity
+#      regression against a run built without it.
+#
+# FMA contraction is disabled on purpose. Allowing it (-mfma alone) buys
+# almost nothing more (6900 -> 6800 ns at N=100) and changes the result
+# of every a*b+c in the library, the reference kernel included.
+#
+# MSVC gains nothing here: /arch:AVX2 leaves the harmonics kernel within
+# noise (15200 -> 15300 ns at N=100), because its vectoriser does not
+# take these loops in the first place. The flag is still passed for
+# consistency, and so a future MSVC that does take them benefits.
+option(SPODY_ARCH_AVX2
+    "Build the library for AVX2 (needs a 2013+ CPU; shifts the _hpc harmonics result by a few ULP)" OFF)
+
 option(SPODY_BUILD_TVB
     "Build the local-only tests / validations / benchmarks under tvb/" OFF)
 
@@ -197,6 +232,15 @@ if(MSVC)
         target_compile_options(spody_core PRIVATE /openmp:experimental)
     endif()
 
+    if(SPODY_ARCH_AVX2)
+        # Measured as noise on the harmonics kernel -- see the option's
+        # comment. Passed anyway so the two toolchains are configured
+        # the same way and a future MSVC vectoriser is not left out.
+        target_compile_options(spody_core PRIVATE
+            $<$<CONFIG:Release>:/arch:AVX2>
+        )
+    endif()
+
     if(SPODY_VEC_REPORT)
         # /Qvec-report:2 prints which loops were vectorized and which were not
         # (with reason codes). Visible during the build.
@@ -231,6 +275,19 @@ else()
         # -fopenmp-simd enables #pragma omp simd without the OpenMP runtime
         # (no libgomp / libomp link, just SIMD pragma support).
         target_compile_options(spody_core PRIVATE -fopenmp-simd)
+    endif()
+
+    if(SPODY_ARCH_AVX2)
+        # -ffp-contract=off is not incidental: without it the compiler
+        # is free to fuse a*b+c into an FMA now that one exists, which
+        # changes the result of the reference kernel too, and that
+        # kernel is the audit baseline the _hpc variant is checked
+        # against. The measured speed is in the wider registers, not in
+        # the fusion.
+        target_compile_options(spody_core PRIVATE
+            $<$<CONFIG:Release>:-mavx2>
+            $<$<CONFIG:Release>:-ffp-contract=off>
+        )
     endif()
 
     if(SPODY_VEC_REPORT)
@@ -318,6 +375,7 @@ message(STATUS "  Build type              : ${CMAKE_BUILD_TYPE}")
 message(STATUS "  Fast math               : ${SPODY_FAST_MATH}")
 message(STATUS "  Whole-program opt       : ${SPODY_WHOLE_PROGRAM_OPT}")
 message(STATUS "  OMP SIMD pragmas        : ${SPODY_ENABLE_OMP_SIMD}")
+message(STATUS "  AVX2 (2013+ CPU only)   : ${SPODY_ARCH_AVX2}")
 if(MSVC)
     message(STATUS "  Silence MSVC CRT warns  : ${SPODY_SILENCE_MSVC_CRT_WARNINGS}")
 endif()

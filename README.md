@@ -237,6 +237,7 @@ The `CMakeLists.txt` exposes a few flags you can toggle on the `cmake` command l
 | `SPODY_WHOLE_PROGRAM_OPT` | `ON` | Enables whole-program / link-time optimization in Release builds (`/GL + /LTCG` on MSVC, `-flto` on GCC/Clang). Slower link, faster runtime. |
 | `SPODY_SILENCE_MSVC_CRT_WARNINGS` | `ON` | On MSVC, silences warnings about "unsafe" standard C functions (`strtok`, `sprintf`, ...). These are portable ISO C functions; the `_s` alternatives are non-portable Microsoft extensions. |
 | `SPODY_ENABLE_OMP_SIMD` | `OFF` | Activates `#pragma omp simd` hints in the harmonic-gravity hot loops (`/openmp:experimental` on MSVC, `-fopenmp-simd` on GCC/Clang). On GCC/Clang this enables explicit SIMD reduction for ~1.5× speedup at degree N≥50. On MSVC the macros expand to no-ops (front-end ignores `reduction` on `simd`); the flag is still useful because it changes the auto-vectorizer behaviour. |
+| `SPODY_ARCH_AVX2` | `OFF` | Builds the library for AVX2 (`-mavx2 -ffp-contract=off` on GCC/Clang, `/arch:AVX2` on MSVC) instead of the x86-64 baseline's SSE2. On GCC this is the single biggest lever on the harmonics: 1.35× at degree 100, 1.5× at degree 200 on top of `SPODY_ENABLE_OMP_SIMD`. Two costs, both the caller's to accept: the binary needs a 2013-or-later CPU and dies on an illegal instruction on anything older, and the wider reduction moves the `_hpc` result by 1–4 ULP. FMA contraction is deliberately left off — it buys ~1% more and changes every `a*b+c` in the library. |
 | `SPODY_VEC_REPORT` | `OFF` | Emits the compiler's auto-vectorization diagnostic at build time (`/Qvec-report:2` on MSVC, `-fopt-info-vec-all` on GCC, `-Rpass=loop-vectorize` on Clang). Useful while tuning hot loops. |
 
 **Example:** production build on MSVC (default):
@@ -253,6 +254,14 @@ cmake -B build-gcc -G Ninja -DCMAKE_C_COMPILER=gcc -DCMAKE_BUILD_TYPE=Release -D
 cmake --build build-gcc
 ```
 
+**Example:** fastest build for a machine you control (AVX2, 2013+ CPU only):
+
+```bash
+cmake -B build-gcc -G Ninja -DCMAKE_C_COMPILER=gcc -DCMAKE_BUILD_TYPE=Release \
+      -DSPODY_ENABLE_OMP_SIMD=ON -DSPODY_ARCH_AVX2=ON
+cmake --build build-gcc
+```
+
 **Example:** safer numerical build (no fast-math, no LTO):
 
 ```bash
@@ -262,12 +271,30 @@ cmake --build build --config Release
 
 ### Compiler recommendation
 
-For the harmonic-gravity hot path the cost-model differences between compilers are
-visible. On MSVC the `_hpc` variant gives roughly 5–10% speedup; on GCC (or Clang)
-with `SPODY_ENABLE_OMP_SIMD=ON` it gives 1.5× at degree 100, 1.7× at degree 200 over
-the reference implementation. For production high-fidelity propagation we therefore
-recommend GCC or Clang with `SPODY_ENABLE_OMP_SIMD=ON`. MSVC remains fully supported
-and produces identical numerical results.
+For the harmonic-gravity hot path the compilers are not interchangeable. Measured
+on GRGM1200A, nanoseconds per `_hpc` call, same machine:
+
+| degree | MSVC | GCC | GCC + `OMP_SIMD` | GCC + `OMP_SIMD` + `ARCH_AVX2` |
+|---:|---:|---:|---:|---:|
+| 50 | 4200 | 2780 | 2580 | 2300 |
+| 100 | 15200 | 10200 | 9300 | 6900 |
+| 200 | 58000 | 40333 | 35333 | 23333 |
+
+MSVC's vectorizer does not take these loops at all: the `_hpc` variant lands within
+noise of the reference there (0.94–1.07×), and `/arch:AVX2` does not change that.
+On GCC the same code is 1.4–1.5× the reference, and AVX2 takes it to 2.1–2.5×. For
+production high-fidelity propagation we therefore recommend **GCC or Clang with
+`SPODY_ENABLE_OMP_SIMD=ON`**, and `SPODY_ARCH_AVX2=ON` as well where the 2013+ CPU
+floor is acceptable.
+
+MSVC remains fully supported and is the more convenient debugging environment, but
+it does **not** produce bit-identical results to a GCC build: the two disagree by
+1–3 ULP on the `_hpc` acceleration, because one vectorizes the reduction and the
+other does not, and a different summation order is a different rounding. The
+reference kernel `spody_get_hgaccbodyfixed` *is* bit-identical across all of them,
+which is what makes it the audit baseline. Practical consequence: a bit-identity
+regression is only meaningful against a reference produced by the same toolchain
+and the same options.
 
 ---
 
