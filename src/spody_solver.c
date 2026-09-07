@@ -13,19 +13,37 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include <float.h>
 #include <math.h>
 #include "spody_solver.h"
 
-/* Brent's root-finding method, classical formulation. The implementation
- * follows the Numerical Recipes / Wikipedia presentation: maintain three
- * approximations (a, b, c) with a current bracket [a, b], and at each
- * step decide between:
- *   - inverse quadratic interpolation (3 distinct values)
- *   - secant method (2 distinct values)
- *   - bisection fallback (whenever the trial step is unsafe)
- * The fallback set of conditions guarantees that |bracket| at least halves
- * every two iterations, so the method is as robust as bisection but
- * usually 5-10 iterations to ~1e-12 in regular regions. */
+/* Brent's zeroin (Brent 1973, ch. 4; the same formulation Numerical
+ * Recipes reprints as zbrent). Three points are carried: b is the best
+ * estimate of the root so far, c is the previous best and always lies
+ * on the other side of the root from b, so [b, c] is the bracket; a is
+ * the point before that. Every iteration tries an inverse quadratic
+ * interpolation through (a, b, c) -- the secant through (a, b) when two
+ * of the three coincide -- and bisects [b, c] instead unless the
+ * interpolated step is well inside the bracket and shrinks faster than
+ * the one before last.
+ *
+ * Two details make it terminate in a handful of evaluations on a
+ * smooth residual, and neither is optional:
+ *
+ *   - convergence is declared on the half-width of [b, c], the live
+ *     bracket, not on the width of the original [x_lo, x_hi]. A far
+ *     end that never moves -- the normal case when the iterates
+ *     approach the root from one side -- does not have to be bisected
+ *     down 40 times after b has already found the root;
+ *
+ *   - a step shorter than tol1 is stretched to tol1 in the direction
+ *     of c. Once b sits on the root the next probe lands just across
+ *     it, the sign flips, c collapses onto the old b and the bracket
+ *     closes in one evaluation instead of a bisection cascade.
+ *
+ * tol1 = 2*DBL_EPSILON*|b| + tol/2: the caller's tol is an absolute
+ * tolerance on x with a machine-precision floor, and the returned b
+ * lies within tol1 of a sign change. */
 int spody_solver_brent(spody_scalar_fn f, void *args,
                        double x_lo, double x_hi,
                        double f_lo, double f_hi,
@@ -35,8 +53,8 @@ int spody_solver_brent(spody_scalar_fn f, void *args,
 {
     if (!f || !x_root_out) return SPODY_SOLVER_ERR_NULL;
 
-    double a = x_lo;
-    double b = x_hi;
+    double a  = x_lo;
+    double b  = x_hi;
     double fa = use_provided_endpoints ? f_lo : f(a, args);
     double fb = use_provided_endpoints ? f_hi : f(b, args);
 
@@ -44,71 +62,64 @@ int spody_solver_brent(spody_scalar_fn f, void *args,
     if (fb == 0.0) { *x_root_out = b; return SPODY_SOLVER_OK; }
     if ((fa > 0.0) == (fb > 0.0)) return SPODY_SOLVER_ERR_NOT_BRACKET;
 
-    /* keep |f(a)| >= |f(b)| so b is the best estimate so far */
-    if (fabs(fa) < fabs(fb)) {
-        double tmp = a; a = b; b = tmp;
-        tmp = fa; fa = fb; fb = tmp;
-    }
-
     double c  = a;
     double fc = fa;
-    int    mflag = 1;          /* whether the previous step was bisection */
-    double d = 0.0;            /* "previous-previous" iterate (used by mflag logic) */
+    double d  = b - a;      /* last step taken                          */
+    double e  = d;          /* the step before that (controls fallback) */
 
     for (int iter = 0; iter < max_iter; iter++) {
 
-        if (fabs(b - a) < tol) {
+        /* Keep c on the far side of the root from b. */
+        if ((fb > 0.0) == (fc > 0.0)) {
+            c = a; fc = fa;
+            d = b - a; e = d;
+        }
+        /* Keep b the best estimate: |f(b)| <= |f(c)|. */
+        if (fabs(fc) < fabs(fb)) {
+            a = b;   b = c;   c = a;
+            fa = fb; fb = fc; fc = fa;
+        }
+
+        double tol1 = 2.0 * DBL_EPSILON * fabs(b) + 0.5 * tol;
+        double m    = 0.5 * (c - b);
+        if (fabs(m) <= tol1 || fb == 0.0) {
             *x_root_out = b;
             return SPODY_SOLVER_OK;
         }
 
-        double s;
-        if (fa != fc && fb != fc) {
-            /* inverse quadratic interpolation */
-            double L1 = (a * fb * fc) / ((fa - fb) * (fa - fc));
-            double L2 = (b * fa * fc) / ((fb - fa) * (fb - fc));
-            double L3 = (c * fa * fb) / ((fc - fa) * (fc - fb));
-            s = L1 + L2 + L3;
+        if (fabs(e) >= tol1 && fabs(fa) > fabs(fb)) {
+            double s = fb / fa;
+            double p, q;
+            if (a == c) {
+                /* two distinct points: secant */
+                p = 2.0 * m * s;
+                q = 1.0 - s;
+            } else {
+                /* three distinct points: inverse quadratic interpolation */
+                double qq = fa / fc;
+                double r  = fb / fc;
+                p = s * (2.0 * m * qq * (qq - r) - (b - a) * (r - 1.0));
+                q = (qq - 1.0) * (r - 1.0) * (s - 1.0);
+            }
+            if (p > 0.0) q = -q; else p = -p;
+
+            /* Take the interpolated step only if it stays inside the
+             * bracket with room to spare and is at most half the step
+             * before last; otherwise bisect. */
+            if (2.0 * p < fmin(3.0 * m * q - fabs(tol1 * q), fabs(e * q))) {
+                e = d;
+                d = p / q;
+            } else {
+                d = m; e = m;
+            }
         } else {
-            /* secant */
-            s = b - fb * (b - a) / (fb - fa);
+            d = m; e = m;
         }
 
-        /* Brent's safety conditions: fall back to bisection if any holds */
-        double s_lo = (3.0 * a + b) * 0.25;
-        double cond1 = (s < s_lo) ^ (s < b);                        /* not in (s_lo, b) */
-        double cond2 = mflag      && fabs(s - b) >= fabs(b - c) * 0.5;
-        double cond3 = !mflag     && fabs(s - b) >= fabs(c - d) * 0.5;
-        double cond4 = mflag      && fabs(b - c) < tol;
-        double cond5 = !mflag     && fabs(c - d) < tol;
-        if (cond1 || cond2 || cond3 || cond4 || cond5) {
-            s = 0.5 * (a + b);
-            mflag = 1;
-        } else {
-            mflag = 0;
-        }
-
-        double fs = f(s, args);
-        d  = c;
-        c  = b;
-        fc = fb;
-
-        if ((fa > 0.0) != (fs > 0.0)) {
-            b  = s;
-            fb = fs;
-        } else {
-            a  = s;
-            fa = fs;
-        }
-        if (fabs(fa) < fabs(fb)) {
-            double tmp = a; a = b; b = tmp;
-            tmp = fa; fa = fb; fb = tmp;
-        }
-
-        if (fs == 0.0) {
-            *x_root_out = s;
-            return SPODY_SOLVER_OK;
-        }
+        a = b; fa = fb;
+        if (fabs(d) > tol1) b += d;
+        else                b += (m > 0.0) ? tol1 : -tol1;
+        fb = f(b, args);
     }
 
     *x_root_out = b;
