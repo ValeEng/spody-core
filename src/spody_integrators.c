@@ -105,6 +105,8 @@ static void zero_all_buffers(IntegratorAllData *integ) {
     integ->y_err = NULL;
     integ->y     = NULL;
     integ->y_old = NULL;
+    integ->f_now = NULL;
+    integ->f_new = NULL;
 }
 
 //----- defaults ----------------------------------------------------------
@@ -161,6 +163,7 @@ int spody_setup_integrator(IntegratorAllData *integ,
     integ->n_accepted = 0;
     integ->n_rejected = 0;
     integ->n_rhs      = 0;
+    integ->fsal_valid = 0;
 
     if (opt) {
         integ->opt = *opt;
@@ -193,6 +196,14 @@ int spody_setup_integrator(IntegratorAllData *integ,
     if (needs_yerr) {
         if (alloc_buf(&integ->y_err, (size_t)dim)) goto fail;
     }
+    /* FSAL derivative buffers: only the DP5(4) 7S tableau has the
+     * property (its last stage is the next step's first). RK4 does
+     * not, and neither would a Fehlberg 7(8); a future method that
+     * does opts in here. */
+    if (method == SPODY_INTEG_RK45) {
+        if (alloc_buf(&integ->f_now, (size_t)dim)) goto fail;
+        if (alloc_buf(&integ->f_new, (size_t)dim)) goto fail;
+    }
 
     return SPODY_INTEG_OK;
 
@@ -212,6 +223,8 @@ int spody_free_integrator(IntegratorAllData *integ) {
     free_buf(&integ->y_err);
     free_buf(&integ->k);
     free_buf(&integ->y_old);
+    free_buf(&integ->f_now);
+    free_buf(&integ->f_new);
     return SPODY_INTEG_OK;
 }
 
@@ -220,7 +233,12 @@ int spody_set_integrator_state(IntegratorAllData *integ, double t0, const double
     if (!integ->y)     return SPODY_INTEG_ERR_NULL;
     integ->t = t0;
     memcpy(integ->y, y0, (size_t)integ->dim * sizeof(double));
+    integ->fsal_valid = 0;
     return SPODY_INTEG_OK;
+}
+
+void spody_integrator_invalidate_fsal(IntegratorAllData *integ) {
+    if (integ) integ->fsal_valid = 0;
 }
 
 //----- RKDP45 (Dormand-Prince 5(4), adaptive, GMAT-style step control) -----
@@ -270,12 +288,38 @@ static int step_rkdp45(IntegratorAllData *integ) {
             }
 
             temp_clock = clock + integ->h * rkdp45_c[j];
-            returnNumber = integ->rhs(temp_clock, temp, k + j*dim, integ->user);
-            integ->n_rhs++;
-            if (returnNumber != 0) return SPODY_INTEG_ERR_RHS;
 
-            for (int i = 0; i < dim; i++) {
-                k[j*dim + i] *= integ->h;   // save the K factor already multiplied by h
+            if (j == 0) {
+                /* Stage 1 is f(t, y). It is already in f_now when the
+                 * previous step's last stage produced it (FSAL) or
+                 * when a rejected attempt evaluated it: the state has
+                 * not moved, so it is evaluated at most once per step. */
+                if (!integ->fsal_valid) {
+                    returnNumber = integ->rhs(temp_clock, temp, integ->f_now, integ->user);
+                    integ->n_rhs++;
+                    if (returnNumber != 0) return SPODY_INTEG_ERR_RHS;
+                    integ->fsal_valid = 1;
+                }
+                for (int i = 0; i < dim; i++) {
+                    k[i] = integ->f_now[i] * integ->h;
+                }
+            } else if (j == 6) {
+                /* Stage 7 sits at (t+h, y_new) because a[6] == b: keep
+                 * the raw derivative, it becomes f_now if the step is
+                 * accepted. */
+                returnNumber = integ->rhs(temp_clock, temp, integ->f_new, integ->user);
+                integ->n_rhs++;
+                if (returnNumber != 0) return SPODY_INTEG_ERR_RHS;
+                for (int i = 0; i < dim; i++) {
+                    k[6*dim + i] = integ->f_new[i] * integ->h;
+                }
+            } else {
+                returnNumber = integ->rhs(temp_clock, temp, k + j*dim, integ->user);
+                integ->n_rhs++;
+                if (returnNumber != 0) return SPODY_INTEG_ERR_RHS;
+                for (int i = 0; i < dim; i++) {
+                    k[j*dim + i] *= integ->h;   // save the K factor already multiplied by h
+                }
             }
 
             #if DEBUG_INTEGRATORS == 1
@@ -347,6 +391,14 @@ static int step_rkdp45(IntegratorAllData *integ) {
             if (scale > RKDP45_FACTOR_UPSCALE) scale = RKDP45_FACTOR_UPSCALE;
 
             memcpy(state, temp, sizeof(double) * (size_t)dim);
+            /* FSAL hand-over: the derivative at the new state is the
+             * one stage 7 just computed. Swap the buffers, no copy. */
+            {
+                double *swap  = integ->f_now;
+                integ->f_now  = integ->f_new;
+                integ->f_new  = swap;
+            }
+            integ->fsal_valid = 1;
             integ->h_old = integ->h;
             integ->t_old = clock;
             integ->t     = clock + integ->h_old;

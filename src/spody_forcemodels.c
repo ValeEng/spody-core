@@ -291,10 +291,11 @@ int spody_adapt_hgdegree(double t, const double *y, double h, void *user) {
      * the accuracy margin on the degree absorbs the difference. */
     double r_bound = r - SPODY_HG_ADAPTIVE_STEP_MARGIN * v * fabs(h);
 
+    int n_before = ctx->hg->N_eval;
     ctx->hg->N_eval = hgdegree_for_radius(r_bound, hgd->R_ref,
                                           SPODY_HG_ADAPTIVE_LN_INV_EPS,
                                           hgd->N);
-    return 0;
+    return ctx->hg->N_eval != n_before;
 }
 
 int spody_force_rhs_default(double t, const double *y, double *dy, void *user) {

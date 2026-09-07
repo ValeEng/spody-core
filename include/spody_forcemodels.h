@@ -356,8 +356,15 @@ int spody_force_rhs_default(double t, const double *y, double *dy, void *user);
  * A loop that never calls it keeps the fixed degree and reproduces
  * earlier results bit for bit; there is no state to initialise.
  *
- * Writes `ctx->hg->N_eval` and returns immediately when ctx->hg is
- * NULL (harmonics off), so it is safe to call unconditionally.
+ * Writes `ctx->hg->N_eval` and returns 1 when the degree differs from
+ * the one the previous call left, 0 otherwise -- including when ctx->hg
+ * is NULL (harmonics off), so it is safe to call unconditionally. A
+ * changed degree is a changed vector field, and an integrator that
+ * carries a derivative across steps (RK45's FSAL stage) must be told:
+ * a loop that calls this feeds the return value to
+ * spody_integrator_invalidate_fsal. That costs one RHS evaluation on
+ * the steps where the degree moves and keeps every stage of every step
+ * on the field the step was chosen for.
  *
  * The degree-n term of the potential decays as (R_ref/r)^n, so
  * requiring it below a relative threshold eps gives the degree

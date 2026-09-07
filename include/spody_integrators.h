@@ -117,6 +117,20 @@ typedef struct {
     double *y_tmp;                // intermediate state for stage evaluation
     double *y_err;
 
+    /* First-same-as-last reuse, SPODY_INTEG_RK45 only: the 7S tableau
+     * evaluates its last stage at (t+h, y_new), which is exactly the
+     * first stage of the step after, so one RHS call per accepted step
+     * is redundant. f_now holds f(t, y) at the current state, unscaled
+     * by h; f_new is the scratch the last stage writes into; the two
+     * swap on acceptance. fsal_valid says whether f_now may seed the
+     * next step instead of a fresh RHS call: set once the derivative
+     * at the current state has been evaluated, cleared by
+     * spody_set_integrator_state and spody_integrator_invalidate_fsal.
+     * NULL / 0 for every other method, none of which reads them. */
+    double *f_now;
+    double *f_new;
+    int     fsal_valid;
+
     /* Cost counters. Zeroed by spody_setup_integrator, monotonically
      * increasing afterwards; read them whenever, typically once the run
      * is over. They measure the integrator's work in a way that does
@@ -126,7 +140,11 @@ typedef struct {
      *
      * n_rhs counts every call to the RHS callback, including the ones
      * spent on trial steps that were later rejected: that work really
-     * was done, and leaving it out would understate the cost. */
+     * was done, and leaving it out would understate the cost. With
+     * RK45 that is six calls per attempted step plus one for the very
+     * first stage of a run (or after an invalidation), not seven: the
+     * seventh is the FSAL derivative carried over from the step
+     * before. */
     size_t n_accepted;            // accepted steps
     size_t n_rejected;            // rejected trial steps
     size_t n_rhs;                 // RHS evaluations
@@ -166,8 +184,27 @@ int spody_free_integrator(IntegratorAllData *integ);
  *
  *   t0  : initial independent variable.
  *   y0  : initial state vector, size matching the workspace `dim`. Copied in.
+ *
+ * Also drops the FSAL derivative (see spody_integrator_invalidate_fsal):
+ * the next step re-evaluates the RHS at (t0, y0).
  */
 int spody_set_integrator_state(IntegratorAllData *integ, double t0, const double *y0);
+
+/*
+ * Forget the derivative the RK45 step keeps from the previous step, so
+ * the next step evaluates its first stage afresh.
+ *
+ * The FSAL reuse assumes the RHS is the same function of (t, y) at the
+ * start of a step as it was at the end of the previous one. Call this
+ * whenever that stops being true between two steps: the vector field
+ * was retuned (an adaptive harmonics degree that moved, a spacecraft
+ * parameter that changed, a force switched on or off) or the state was
+ * edited in place rather than through spody_set_integrator_state.
+ *
+ * Costs one extra RHS evaluation on the next step and nothing else.
+ * A no-op for methods without the FSAL property.
+ */
+void spody_integrator_invalidate_fsal(IntegratorAllData *integ);
 
 /*
  * Advance the state by exactly one step.
