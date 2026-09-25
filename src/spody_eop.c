@@ -295,10 +295,16 @@ int spody_interpolate_eop(MappedEOP *map, double et,
     /* Records are nominally daily-stepped; guard against duplicate
      * MJDs (defensive, shouldn't happen with finals2000A.all). */
     double frac = (dmjd > 0.0) ? (mjd - lo->mjd) / dmjd : 0.0;
+    /* UT1-UTC jumps by +1 s across a leap second while UT1-TAI stays
+     * continuous (IERS convention). Bring hi's value onto lo's UTC
+     * scale before interpolating: identical to interpolating UT1-TAI,
+     * and bit-identical to the plain lerp on every other day (the
+     * jump is then exactly 0.0). */
+    double leap_jump = spody_tai_minus_utc(hi->mjd) - spody_tai_minus_utc(lo->mjd);
 
     if (xp_arcsec) *xp_arcsec = lo->xp_arcsec + frac * (hi->xp_arcsec - lo->xp_arcsec);
     if (yp_arcsec) *yp_arcsec = lo->yp_arcsec + frac * (hi->yp_arcsec - lo->yp_arcsec);
-    if (dut1_sec)  *dut1_sec  = lo->dut1_sec  + frac * (hi->dut1_sec  - lo->dut1_sec);
+    if (dut1_sec)  *dut1_sec  = lo->dut1_sec  + frac * ((hi->dut1_sec - leap_jump) - lo->dut1_sec);
     if (dx_mas)    *dx_mas    = lo->dx_mas    + frac * (hi->dx_mas    - lo->dx_mas);
     if (dy_mas)    *dy_mas    = lo->dy_mas    + frac * (hi->dy_mas    - lo->dy_mas);
     return 0;
