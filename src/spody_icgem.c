@@ -32,6 +32,7 @@
  * = 0. Data rows start at n=1 with (1,0) and (1,1) padded to zero,
  * matching the GRAIL/PGDA convention.
  */
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -316,8 +317,14 @@ int spody_convert_icgem_to_tab(const char *input_gfc,
         }
     }
 
-    fclose(fout);
+    int write_failed = ferror(fout);
+    int close_failed = fclose(fout) != 0;
     free(C); free(S); free(sC); free(sS);
+    if (write_failed || close_failed) {
+        fprintf(stderr, "icgem: write failed on '%s': %s\n",
+                output_tab, strerror(errno));
+        return 1;
+    }
     fprintf(stderr,
         "icgem: wrote %zu rows to %s\n", rows_written, output_tab);
     return 0;

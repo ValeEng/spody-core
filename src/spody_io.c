@@ -113,7 +113,9 @@ int spody_free_LogBuffer(SpodyLogBuffer *buf) {
     int rc = 0;
     if (buf->fp) {
         rc = spody_log_flush(buf);
-        fclose(buf->fp);
+        /* fclose does the final flush of the stdio buffer: a full disk
+         * can surface only here. */
+        if (fclose(buf->fp) != 0 && rc == 0) rc = -3;
         buf->fp = NULL;
     }
     if (buf->data) {

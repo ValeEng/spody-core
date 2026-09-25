@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include <errno.h>
 #include <stdio.h>
 #include <string.h>
 #include "spody_mission.h"
@@ -204,7 +205,11 @@ int spody_mission_trajectory_to_csv(const char *bin_path, const char *csv_path,
         return -1;
     }
     int rc = spody_log_dump_csv(bin_path, out, cols, 7, decimate);
-    fclose(out);
+    int write_failed = ferror(out);
+    if ((fclose(out) != 0 || write_failed) && rc == 0) {
+        perror("spody_mission_trajectory_to_csv write");
+        rc = -5;
+    }
     return rc;
 }
 
@@ -295,8 +300,12 @@ int spody_mission_breakdown_to_csv(const char *bin_path, const char *csv_path,
         n_in++;
     }
 
-    fclose(out);
+    int write_failed = ferror(out);
     fclose(bin);
+    if (fclose(out) != 0 || write_failed) {
+        perror("spody_mission_breakdown_to_csv write");
+        return -5;
+    }
     fprintf(stderr, "spody_mission_breakdown_to_csv: %ld records read, %ld rows written (decimate=%d)\n",
             n_in, n_out, decimate);
     return 0;

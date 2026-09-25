@@ -268,7 +268,15 @@ static int create_binary_ephemeris_file(EphemerisFile_Header *ep, int64_t *old_e
     }
     free(eprec);
     fclose(fp_ascp);
-    fclose(fp_bin);
+    /* The record writes above are buffered: a full disk shows up as
+     * the stream error flag or at the final flush in fclose. -2 (not
+     * -1) so the caller can tell a lost write from a missing chunk. */
+    int write_failed = ferror(fp_bin);
+    if (fclose(fp_bin) != 0 || write_failed) {
+        fprintf(stderr, "ephemeris: write failed on '%s': %s\n",
+                bin_filename, strerror(errno));
+        return -2;
+    }
     return 0;
 }
 
@@ -605,8 +613,12 @@ int spody_createfile_MappedEphemerisData(const char *path, const char **file_nam
     ep.seconds_per_record = (int)(ep.seconds_per_record * SECONDSxDAY);
 
     /* first write header info */
-    fwrite(&ep, sizeof(EphemerisFile_Header), 1, fp_bin);
-    fclose(fp_bin);
+    int header_failed = fwrite(&ep, sizeof(EphemerisFile_Header), 1, fp_bin) != 1;
+    if (fclose(fp_bin) != 0 || header_failed) {
+        fprintf(stderr, "ephemeris: write failed on '%s': %s\n",
+                bin_filename, strerror(errno));
+        return -2;
+    }
 
     #if DEBUG_EPHEMERIS == 1
     printf("header writed, size : %zu (magic=%.8s, version=%u)\n",
@@ -620,6 +632,7 @@ int spody_createfile_MappedEphemerisData(const char *path, const char **file_nam
         sprintf(ascp_filename, "./%s/ascp%s.%s",path,file_names[i],de);
 
         returnNumber = create_binary_ephemeris_file(&ep,&old_epoch,ascp_filename,bin_filename);
+        if (returnNumber == -2) return -2;   /* lost write: output is truncated */
         #if DEBUG_EPHEMERIS == 1
         printf("old epoch : %lld\n",(long long)old_epoch);
         #endif
@@ -669,7 +682,11 @@ int spody_createfile_MappedEphemerisData(const char *path, const char **file_nam
                     }
                 }
             }
-            fclose(fp_fix);
+            if (fclose(fp_fix) != 0) {
+                fprintf(stderr, "ephemeris: write failed on '%s': %s\n",
+                        bin_filename, strerror(errno));
+                return -2;
+            }
         }
     }
 

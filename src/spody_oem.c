@@ -29,6 +29,7 @@
  * A file may carry several META blocks (multi-segment OEM); each one
  * re-validates the frame / time system before its data rows.
  */
+#include <errno.h>
 #include <ctype.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -292,7 +293,14 @@ int spody_convert_oem_to_state_icrf(int n_inputs,
         if (file_rc != 0) { rc = file_rc; break; }
     }
 
-    fclose(fout);
+    /* Records are buffered: a full disk surfaces as the stream error
+     * flag or at the final flush in fclose, not at the fwrite calls. */
+    int write_failed = ferror(fout);
+    if (fclose(fout) != 0 || write_failed) {
+        fprintf(stderr, "oem: write failed on '%s': %s\n",
+                output_bin, strerror(errno));
+        rc = 1;
+    }
 
     if (rc == 0) {
         if (n_written == 0) {

@@ -40,6 +40,7 @@
  *     are in km (ITRF); clock_bias in microseconds (ignored here).
  *   - We stop at "EOF" or end-of-file (whichever comes first).
  */
+#include <errno.h>
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -281,7 +282,14 @@ int spody_convert_sp3_to_state_icrf(int n_inputs,
         if (file_rc != 0) { rc = file_rc; break; }
     }
 
-    fclose(fout);
+    /* Records are buffered: a full disk surfaces as the stream error
+     * flag or at the final flush in fclose, not at the fwrite calls. */
+    int write_failed = ferror(fout);
+    if (fclose(fout) != 0 || write_failed) {
+        fprintf(stderr, "sp3: write failed on '%s': %s\n",
+                output_bin, strerror(errno));
+        rc = 1;
+    }
 
     if (rc == 0 && n_inputs > 1 && n_records_all > 0) {
         double duration_h = (et_last_all - et_first_all) / 3600.0;
