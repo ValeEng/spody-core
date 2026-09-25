@@ -60,41 +60,51 @@ static int read_spherical_harmonics_file(FILE *file, HarmonicGravityData *pm, in
     int size = (pm->N + 2) * (pm->N + 3) / 2;
     pm->C = calloc(size, sizeof(double)); // calloc init to 0
     pm->S = calloc(size, sizeof(double));
+    if (!pm->C || !pm->S) {
+        fprintf(stderr, "harmonics: out of memory for degree %d\n", pm->N);
+        goto fail;
+    }
 
-    int loaded_count = 0;
+    /* Data rows are `n, m, C, S[, sigmas]`. A row is written at the
+     * triangular index n(n+1)/2 + m, so an order outside 0..n would land
+     * in another coefficient's slot (m > n) or before the array (m < 0):
+     * both are refused, as is a row missing a field. Blank lines (a
+     * trailing CRLF, a split over-long line) are skipped. */
+    int line_no = 1;   /* the header was line 1 */
     while (fgets(line, sizeof(line), file)) {
+        ++line_no;
+        if (line[strspn(line, " \t\r\n")] == '\0') continue;
 
-        token = strtok(line, ","); 
-        //printf("Token N read: %s\n", token);
+        char *tok_n = strtok(line, ",");
+        char *tok_m = strtok(NULL, ",");
+        char *tok_c = strtok(NULL, ",");
+        char *tok_s = strtok(NULL, ",");
+        if (!tok_n || !tok_m || !tok_c || !tok_s) {
+            fprintf(stderr, "harmonics: line %d: expected 'n, m, C, S'\n",
+                    line_no);
+            goto fail;
+        }
 
-        if (!token) continue;
-        
-        int n = (int)strtod(token, NULL);
+        int n = (int)strtod(tok_n, NULL);
         if (n > pm->N) break; // Stop if beyond desired degree
-
-        token = strtok(NULL, ",");
-        int m = (int)strtod(token, NULL);
-        //printf("Token N read: %s\n", token);
-
-        token = strtok(NULL, ",");
-        double C_val = strtod(token, NULL);
-        //printf("Token N read: %s\n", token);
-        
-        token = strtok(NULL, ",");
-        double S_val = strtod(token, NULL);
-        //printf("Token N read: %s\n", token);
-        //printf("Read coeffs n=%d m=%d | C=%.12e | S=%.12e\n", n, m, C_val, S_val);
+        int m = (int)strtod(tok_m, NULL);
+        if (n < 0 || m < 0 || m > n) {
+            fprintf(stderr, "harmonics: line %d: degree/order n=%d m=%d "
+                    "outside 0 <= m <= n\n", line_no, n, m);
+            goto fail;
+        }
 
         int index = (n * (n + 1) / 2) + m; //tringular indexing
-        //printf("index: %d\n", index);
-
-        if (index < size) {
-            pm->C[index] = C_val;
-            pm->S[index] = S_val;
-        }
+        pm->C[index] = strtod(tok_c, NULL);
+        pm->S[index] = strtod(tok_s, NULL);
     }
 
     return 0;
+
+fail:
+    free(pm->C); pm->C = NULL;
+    free(pm->S); pm->S = NULL;
+    return -1;
 }
 
 void spody_get_hgaccbodyfixed(HarmonicGravity *hg, double pos[3], double acc_out[3]) {
