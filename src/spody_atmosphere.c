@@ -192,6 +192,13 @@ int spody_setup_MappedSpaceWeatherData(MappedSpaceWeatherData *msw,
     msw->mjd_first          = msw->records[0].mjd;
     msw->mjd_last_predicted = msw->records[k - 1].mjd;
     msw->mjd_last_observed  = isfinite(mjd_last_obs) ? mjd_last_obs : msw->mjd_first;
+
+    /* End of the leading gap-free daily run: the rows the NRLMSISE
+     * input builder can index as mjd_first + i. Past it the file
+     * turns monthly. */
+    size_t d = 0;
+    while (d + 1 < k && msw->records[d + 1].mjd == msw->records[d].mjd + 1.0) ++d;
+    msw->mjd_last_daily = msw->records[d].mjd;
     return 0;
 }
 
@@ -296,9 +303,10 @@ int spody_space_weather_msis_inputs(MappedSpaceWeather *map, double et,
 
     double mjd = spody_et_to_mjd_utc(et);
     /* No interpolation here (the model prescription is built on daily
-     * values and UT-day-aligned 3h bins), so the whole last predicted
-     * day is usable, not just its midnight. */
-    if (mjd < msw->mjd_first || mjd >= msw->mjd_last_predicted + 1.0)
+     * values and UT-day-aligned 3h bins), so the whole last daily
+     * day is usable, not just its midnight. The monthly tail past it
+     * has no 3-hour Ap and cannot be indexed by day. */
+    if (mjd < msw->mjd_first || mjd >= msw->mjd_last_daily + 1.0)
         return -1;
 
     double day = floor(mjd);

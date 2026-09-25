@@ -90,22 +90,28 @@ typedef struct {
     double ap_3h[8];           /* 3-hour Ap values (00,03,06,09,12,15,18,21)*/
 } SpaceWeatherRecord;
 
-/* Shared, read-only space weather table. Daily-stepped, contiguous (no
- * gaps in the source file). Thread-safe to share across workers because
- * every query is a binary search + indexed lookup that touches the
- * table read-only.
+/* Shared, read-only space weather table. Thread-safe to share across
+ * workers because every query is a binary search + indexed lookup that
+ * touches the table read-only.
  *
- * `mjd_last_observed` is the MJD of the last row from the "OBSERVED"
- * section; everything after is CelesTrak prediction. Queries past
- * `mjd_last_predicted` fail (caller decides whether to abort or
- * extrapolate -- typical mission-design propagations beyond the
- * predicted horizon should switch to a climatological mean rather
- * than trust the tail). */
+ * The CelesTrak file is NOT daily all the way: observed rows, then
+ * about 45 days of daily prediction, then a long-range tail with one
+ * row per MONTH (DATA_TYPE "PRM", 3-hour Ap left blank) out to about
+ * 15 years ahead. Hence four horizons, in increasing MJD:
+ *   - `mjd_last_observed`: last row of the "OBS" section;
+ *   - `mjd_last_daily`: last row of the leading gap-free daily run.
+ *     spody_space_weather_msis_inputs -- the NRLMSISE drag path --
+ *     works only up to the end of that day;
+ *   - `mjd_last_predicted`: last row of the file, the limit of the
+ *     interpolated daily indices (spody_interpolate_space_weather).
+ * A run window with drag must end before mjd_last_daily + 1: past it
+ * the density callback fails and the drag force is zero. */
 typedef struct {
     SpaceWeatherRecord *records;
     size_t              n_records;
     double              mjd_first;
     double              mjd_last_observed;
+    double              mjd_last_daily;
     double              mjd_last_predicted;
 } MappedSpaceWeatherData;
 
