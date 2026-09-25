@@ -53,6 +53,7 @@
  *   8-15    F8.2   MJD (UTC)
  *   18-27   F10.6  Bulletin A PM-x  (")
  *   38-46   F9.6   Bulletin A PM-y  (")
+ *   58      A1     IERS (I) or Prediction (P) flag, Bulletin A UT1-UTC
  *   59-68   F10.7  Bulletin A UT1-UTC (s)
  *   98-106  F9.3   Bulletin A dX wrt IAU2000A  (mas)
  *   118-126 F9.3   Bulletin A dY wrt IAU2000A  (mas)
@@ -131,6 +132,7 @@ int spody_setup_MappedEOPData(MappedEOPData *med, const char *filename) {
     rewind(fp);
     size_t k = 0;
     double mjd_last_b = -INFINITY;
+    double mjd_last_i = -INFINITY;
     while (k < n && fgets(line, sizeof line, fp)) {
         EOPRecord rec;
         memset(&rec, 0, sizeof rec);
@@ -176,6 +178,13 @@ int spody_setup_MappedEOPData(MappedEOPData *med, const char *filename) {
             rec.has_bulletin_b = 0;
         }
 
+        /* Measured (not predicted): Bulletin B, or a Bulletin A
+         * UT1-UTC flagged 'I'. UT1 is the flag that matters: it is
+         * the fastest-degrading prediction and it drives the ERA. */
+        if (has_b || line[57] == 'I') {
+            if (rec.mjd > mjd_last_i) mjd_last_i = rec.mjd;
+        }
+
         med->records[k++] = rec;
     }
     fclose(fp);
@@ -193,7 +202,14 @@ int spody_setup_MappedEOPData(MappedEOPData *med, const char *filename) {
     med->mjd_last_predicted  = med->records[med->n_records - 1].mjd;
     med->mjd_last_observed   = isfinite(mjd_last_b) ? mjd_last_b
                                                      : med->mjd_first;
+    med->mjd_last_measured   = isfinite(mjd_last_i) ? mjd_last_i
+                                                     : med->mjd_first;
     return 0;
+}
+
+int spody_eop_covers_mjd(const MappedEOPData *med, double mjd_utc) {
+    if (!med || med->n_records == 0) return 0;
+    return mjd_utc >= med->mjd_first && mjd_utc <= med->mjd_last_predicted;
 }
 
 int spody_free_MappedEOPData(MappedEOPData *med) {
@@ -254,7 +270,7 @@ int spody_interpolate_eop(MappedEOP *map, double et,
     const MappedEOPData *med = map->med;
 
     double mjd = spody_et_to_mjd_utc(et);
-    if (mjd < med->mjd_first || mjd > med->mjd_last_predicted) {
+    if (!spody_eop_covers_mjd(med, mjd)) {
         return -1;   /* out of coverage */
     }
 

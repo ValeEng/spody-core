@@ -140,6 +140,18 @@ static int _sp3_scan_file(FILE *fin,
         /* SP3 0.000000 = "no data" sentinel (SP3-d sect. 3.2.5). */
         if (x_itrf == 0.0 && y_itrf == 0.0 && z_itrf == 0.0) continue;
 
+        /* Outside the EOP table the rotation falls back to the
+         * identity: refuse instead of writing ITRF labelled ICRF. */
+        const MappedEOPData *eop = ctx->eop->med;
+        double mjd_utc = spody_et_to_mjd_utc(cur_et);
+        if (!spody_eop_covers_mjd(eop, mjd_utc)) {
+            fprintf(stderr,
+                "sp3: epoch UTC MJD %.5f in '%s' is outside the EOP table "
+                "(UTC MJD %.2f .. %.2f); update finals2000A.all\n",
+                mjd_utc, input_sp3, eop->mjd_first, eop->mjd_last_predicted);
+            return 1;
+        }
+
         double R_i2bf[3][3], R_bf2i[3][3];
         spody_bf_rotation_earth(ctx, cur_et, R_i2bf, R_bf2i);
         double pos_itrf[3] = { x_itrf, y_itrf, z_itrf };

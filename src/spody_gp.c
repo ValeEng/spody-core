@@ -67,6 +67,17 @@ int spody_gp_to_state_icrf(const spody_sgp4_elements *el,
         fprintf(stderr, "gp: cannot load EOP from '%s'\n", eop_file);
         return 1;
     }
+    /* Outside the EOP table the TEME rotation falls back to the
+     * identity: refuse instead of returning TEME labelled ICRF. */
+    if (!spody_eop_covers_mjd(&eop_data, el->epoch_mjd)) {
+        fprintf(stderr,
+            "gp: epoch UTC MJD %.5f is outside the EOP table '%s' "
+            "(UTC MJD %.2f .. %.2f); update finals2000A.all\n",
+            el->epoch_mjd, eop_file, eop_data.mjd_first,
+            eop_data.mjd_last_predicted);
+        spody_free_MappedEOPData(&eop_data);
+        return 1;
+    }
     MappedIAU2006Data iau_data = {0};
     if (spody_setup_MappedIAU2006Data(&iau_data, iau2006_dir) != 0) {
         fprintf(stderr, "gp: cannot load IAU 2006 from '%s'\n", iau2006_dir);

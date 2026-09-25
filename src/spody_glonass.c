@@ -215,6 +215,18 @@ static int _glonass_scan_file(FILE *fin,
         double tt_sec  = ET_FROM_JD(jd_tt);
         double et      = tt_sec + spody_tdb_minus_tt(tt_sec);
 
+        /* Outside the EOP table the rotation falls back to the
+         * identity: refuse instead of writing ECEF labelled ICRF. */
+        const MappedEOPData *eop = ctx->eop->med;
+        double mjd_utc = spody_et_to_mjd_utc(et);
+        if (!spody_eop_covers_mjd(eop, mjd_utc)) {
+            fprintf(stderr,
+                "glonass: epoch UTC MJD %.5f in '%s' is outside the EOP "
+                "table (UTC MJD %.2f .. %.2f); update finals2000A.all\n",
+                mjd_utc, input_rnx, eop->mjd_first, eop->mjd_last_predicted);
+            return 1;
+        }
+
         /* --- Rotation ECEF -> ICRF ----------------------------- */
         double R_i2bf[3][3], R_bf2i[3][3];
         spody_bf_rotation_earth(ctx, et, R_i2bf, R_bf2i);

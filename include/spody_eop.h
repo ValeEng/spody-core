@@ -79,17 +79,22 @@ typedef struct {
  * no mutating access is exposed: every query is a binary search +
  * linear interpolation that touches the table read-only.
  *
- * `mjd_last_observed` is the MJD of the last record that carries
- * Bulletin B final values; everything after is IERS prediction. The
- * staleness gate (`spody_eop_last_observed_mjd`) reports this so
- * the app can warn the user when the run window crosses into the
- * predicted region. `mjd_last_predicted` is the hard upper bound:
- * queries beyond it return an error. */
+ * Three horizons, in increasing MJD:
+ *   - `mjd_last_observed`: last record carrying Bulletin B final
+ *     values. Bulletin B lags real time by about a month, so this is
+ *     NOT where predictions start.
+ *   - `mjd_last_measured`: last record whose Bulletin A UT1-UTC is
+ *     flagged 'I' (IERS rapid, measured) or that carries Bulletin B.
+ *     Everything after it is flagged 'P': IERS prediction. This is
+ *     the boundary the app warns on.
+ *   - `mjd_last_predicted`: last record of the table, the hard upper
+ *     bound: queries beyond it return an error. */
 typedef struct {
     EOPRecord *records;
     size_t     n_records;
     double     mjd_first;
     double     mjd_last_observed;
+    double     mjd_last_measured;
     double     mjd_last_predicted;
 } MappedEOPData;
 
@@ -129,8 +134,8 @@ int spody_free_MappedEOP(MappedEOP *map);
  * table; the leap-second corrections live in `spody_const.h`.
  *
  * Returns 0 on success, -1 when `et` falls outside the table's
- * coverage [mjd_first, mjd_last_predicted] (caller decides whether
- * to abort or extrapolate). Out parameters are written only on
+ * coverage (spody_eop_covers_mjd; caller decides whether to abort
+ * or extrapolate). Out parameters are written only on
  * success; on failure they are untouched. Any of them may be NULL
  * if the caller doesn't need that quantity. */
 int spody_interpolate_eop(MappedEOP *map, double et,
@@ -138,14 +143,21 @@ int spody_interpolate_eop(MappedEOP *map, double et,
                           double *dut1_sec,
                           double *dx_mas,    double *dy_mas);
 
-/* MJD of the last record carrying Bulletin B (observed) data. Past
- * this MJD the table is IERS prediction; precision degrades from
- * mas (observed) to ~10 mas at +1 month, ~100 mas at +6 months,
- * then several arcseconds towards the +365 day prediction horizon.
- *
- * The app uses this to warn the user when the run window crosses
- * into the predicted region -- still usable, but the user should
- * know. */
+/* 1 when UTC MJD `mjd_utc` lies inside the table, i.e. in
+ * [mjd_first, mjd_last_predicted] -- exactly the range in which
+ * spody_interpolate_eop succeeds -- and 0 otherwise. Callers that
+ * rotate between ICRF and ITRF test it first, because the rotation
+ * providers (spody_bf_rotation_earth, spody_teme2icrf_rotation) have
+ * no error channel and fall back to the identity outside the table. */
+int spody_eop_covers_mjd(const MappedEOPData *med, double mjd_utc);
+
+/* MJD of the last record carrying Bulletin B (final) data. Bulletin
+ * B lags real time by about a month and is followed by Bulletin A
+ * rapid values that are still measured, so this is not where the
+ * predictions start: that boundary is `mjd_last_measured` in
+ * MappedEOPData. Past it precision degrades from mas to ~10 mas at
+ * +1 month, ~100 mas at +6 months, then several arcseconds towards
+ * the +365 day horizon. */
 double spody_eop_last_observed_mjd(const MappedEOPData *med);
 
 /* MJD of the last record in the table (hard upper bound, including
