@@ -72,6 +72,36 @@ void spody_bf_rotation_moon(const ForceModelContext *ctx, double et,
     spody_getrotmatrix_moonpa2icrf(angles[0], angles[1], angles[2], R_bf_to_icrf);
 }
 
+void spody_bf_angular_velocity_icrf(const ForceModelContext *ctx, double et,
+                                    double omega_icrf[3]) {
+    double R_i2bf[3][3], R_bf2i[3][3];
+    if (ctx->naif_central == EARTH_NAIF) {
+        ctx->get_bf_rotation(ctx, et, R_i2bf, R_bf2i);
+        for (int i = 0; i < 3; i++)
+            omega_icrf[i] = EARTH_ROT_RATE_RADPS * R_bf2i[i][2];
+        return;
+    }
+    /* R = R_bf2i(t). Its derivative satisfies dR/dt = [omega]x R, so
+     * [omega]x = dR/dt R^T; the skew part is averaged over its two
+     * mirrored entries. */
+    const double h = SPODY_BF_OMEGA_FD_STEP_S;
+    double Rp[3][3], Rm[3][3];
+    ctx->get_bf_rotation(ctx, et + h, R_i2bf, Rp);
+    ctx->get_bf_rotation(ctx, et - h, R_i2bf, Rm);
+    ctx->get_bf_rotation(ctx, et,     R_i2bf, R_bf2i);
+    double W[3][3];
+    for (int i = 0; i < 3; i++)
+        for (int j = 0; j < 3; j++) {
+            double s = 0.0;
+            for (int k = 0; k < 3; k++)
+                s += (Rp[i][k] - Rm[i][k]) / (2.0 * h) * R_bf2i[j][k];
+            W[i][j] = s;
+        }
+    omega_icrf[0] = 0.5 * (W[2][1] - W[1][2]);
+    omega_icrf[1] = 0.5 * (W[0][2] - W[2][0]);
+    omega_icrf[2] = 0.5 * (W[1][0] - W[0][1]);
+}
+
 void spody_force_sphericalharmonics(const ForceModelContext *ctx,
                                     double et, const double r[3],
                                     double acc[3]) {

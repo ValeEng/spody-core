@@ -136,6 +136,21 @@ void spody_bf_rotation_moon(const ForceModelContext *ctx, double et,
                              double R_icrf_to_bf[3][3],
                              double R_bf_to_icrf[3][3]);
 
+/* Angular velocity of the central body's body-fixed frame, in ICRF
+ * (rad/s), at `et` -- the omega of the transport theorem
+ *   v_icrf = R_bf_to_icrf v_rot + omega x r_icrf
+ * that turns a velocity measured in the rotating frame (ECEF-style)
+ * into an inertial one.
+ *
+ * Earth (ctx->naif_central == EARTH_NAIF): EARTH_ROT_RATE_RADPS about
+ * the ITRS z axis, exactly as the GNSS converters apply it, so the two
+ * paths agree to the bit. Any other body: a central difference of
+ * ctx->get_bf_rotation over +-SPODY_BF_OMEGA_FD_STEP_S, read off the
+ * skew matrix dR/dt R^T -- for the Moon that follows the DE440
+ * libration, not a nominal spin. Requires ctx->get_bf_rotation. */
+void spody_bf_angular_velocity_icrf(const ForceModelContext *ctx, double et,
+                                    double omega_icrf[3]);
+
 struct ForceModelContext {
     /* central body (the body the satellite orbits) */
     double  mu_central;          /* km^3/s^2                          */

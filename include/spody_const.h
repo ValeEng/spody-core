@@ -157,6 +157,19 @@ extern "C" {
     // contain the light source itself.
 #define SUN_NAIF 10
 
+    // NAIF id of the Earth. Its body-fixed angular velocity is taken as
+    // EARTH_ROT_RATE_RADPS about the ITRS z axis -- the convention the
+    // GNSS converters use -- rather than differentiated numerically, so a
+    // rotating-frame state and a converted one agree to the bit.
+#define EARTH_NAIF 399
+
+    // Half-width of the central difference that turns a body-fixed
+    // rotation provider into an angular velocity (bodies other than the
+    // Earth: the Moon, from its DE440 libration). 60 s keeps the
+    // truncation at (omega*h)^2 ~ 3e-8 of the lunar rate and the
+    // round-off of the matrix entries far below it.
+#define SPODY_BF_OMEGA_FD_STEP_S 60.0
+
     // WGS-84 reference ellipsoid (NGA.STND.0036). Used for the
     // ECEF -> geodetic conversion feeding the Earth atmosphere model
     // (NRLMSISE-00 takes geodetic latitude/altitude). Distinct from
