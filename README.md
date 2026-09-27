@@ -22,9 +22,9 @@ The library provides a clean, modular API covering the core pillars of orbital m
 - 🛰 **Force models** — Composite RHS with two-body + harmonics + third bodies + SRP (cannonball, conical eclipse) + atmospheric drag; a separate **CR3BP** RHS for the synodic rotating frame
 - 🌬 **Atmosphere** — Native NRLMSISE-00 port with CelesTrak space-weather input and an optional density-scale `k(t)` node table
 - 🧭 **Time & Earth orientation** — IERS leap seconds + SPICE `deltet`, so ET is true TDB end-to-end; EOP reader and the IAU 2006/2000A_R06 inertial-to-ITRS chain
-- 🎯 **Events & solver** — Event detection (impact, eclipse, altitude crossings) with Hermite + Brent localisation, one-shot propagator wrapper
+- 🎯 **Events & solver** — Event detection (impact, eclipse, altitude crossings) with Brent localisation on the integrator's quintic dense output
 - 🔄 **Format converters** — ICGEM `.gfc` gravity fields, IGS/MGEX SP3 precise orbits, RINEX-NAV GPS and GLONASS broadcast, CCSDS OEM
-- 🧩 **I/O & logging** — Buffered binary record output and a text log mirror that tees every library and host message to the run's log file (the `mission` orchestration layer is deprecated)
+- 🧩 **Logging** — A text log mirror that tees every library and host message to the run's log file
 
 The runtime API is **thread-safe by construction**: shared, read-only data structures
 (ephemeris, gravity coefficients) are decoupled from per-thread query handles, so a
@@ -39,7 +39,7 @@ single dataset can drive many concurrent propagations without contention.
 | `ephemeris` | Parses and queries JPL planetary ephemerides (e.g. DE440). On-disk format is `SPDYEPET` (ET seconds past J2000, ~250× more precision than legacy JD-days). Memory-mapped with thread-safe handle/data split. |
 | `eclipse` | Solar eclipse fraction via Montenbruck-Gill: conical shadow with finite Sun radius + finite occulter radius, returning the visible-Sun fraction across umbra, penumbra, and anteumbra. Takes a **list** of occulting bodies and combines them by inclusion-exclusion, so shadows that overlap on the solar disc are not counted twice (Earth seen from a lunar orbit, Moon transiting the Sun for an Earth orbiter). |
 | `harmonics` | Spherical-harmonics gravity using the Pines / Lundberg-Schutz recurrence. Returns the acceleration `-∇V_pert` (callers just sum into `dvdt`). Includes a `_hpc` SIMD-friendly variant for production hot paths, and an adaptive degree rule `N(r) = ln(1/eps) / ln(r / R_ref)` that lets an eccentric orbit stop paying its closest-approach degree for the whole revolution. |
-| `integrators` | ODE integrators with a generic RHS callback. RKDP45 (Dormand-Prince 5(4) "7S" pair, GMAT-style step control) and RK4 fixed-step; the `spody_integrator_method` enum also reserves RK78 and velocity-Verlet slots, not yet implemented. RKDP45 keeps its last stage as the next step's first (FSAL): six RHS calls per attempted step, and a caller that retunes the force model between two steps says so through `spody_integrator_invalidate_fsal`. Every run carries `n_accepted` / `n_rejected` / `n_rhs` counters. |
+| `integrators` | ODE integrators with a generic RHS callback. RKDP45 (Dormand-Prince 5(4) "7S" pair, GMAT-style step control) and RK4 fixed-step. The step control has no separate absolute tolerance: per 3-component block, the embedded error estimate is taken relative to the step's own change of that block (absolute when that change is small). RKDP45 keeps its last stage as the next step's first (FSAL): six RHS calls per attempted step, and a caller that retunes the force model between two steps says so through `spody_integrator_invalidate_fsal`. Every run carries `n_accepted` / `n_rejected` / `n_rhs` counters. |
 | `forcemodels` | Composite RHS used by the integrator: two-body central + spherical harmonics + third bodies (Cowell) + cannonball SRP with conical eclipse over a caller-supplied occulter list (delegates to `eclipse`) + atmospheric drag with air co-rotation. Per-force breakdown helper for diagnostics. A second RHS, `spody_force_rhs_cr3bp`, integrates the Circular Restricted 3-Body Problem in the synodic rotating frame from the `cr3bp_*` fields of the same context, with converters to and from a primary's inertial frame. |
 | `atmosphere` | Space-weather ingestion (CelesTrak: observed daily F10.7 + storm-time 3-hour Ap history) and the density-scale `k(t)` node table produced by an external calibration, both memory-mapped with the same handle/data split as `ephemeris`. |
 | `nrlmsise00` | Native C port of the NRL MSISE-00 empirical atmosphere (`gtd7` / `gtd7d`), validated against the official NRL reference driver to the printed 7 digits. |
@@ -55,8 +55,7 @@ single dataset can drive many concurrent propagations without contention.
 | `oem` | Reads CCSDS OEM text ephemerides (multi-file, overlap-deduplicated) into an ICRF state reference binary. |
 | `sgp4` | The analytic propagator that GP element sets (TLE / OMM) are fitted inside of. Their elements are *mean* elements of this theory, not an osculating state, so handing them to a numerical integrator is a physical error rather than an approximation: this module is the theory. Equations from Hoots & Roehrich, Spacetrack Report No. 3 (1980), with the corrections documented in Vallado et al., AIAA 2006-6753; output is TEME. Both branches are present: near-Earth SGP4, and SDP4 for element sets whose period reaches 225 min, carrying the lunisolar secular and periodic terms and the two resonance bands (24 h synchronous, 12 h). The resonance is integrated from epoch on every call rather than carried between them, so a state depends on the requested time alone and one element set can be propagated from several threads at once. Conformance is checked against the test cases published with AIAA 2006-6753: all 33 cases agree with the reference vectors to 1.8e-06 km over 634 points. |
 | `solver` | Scalar root finding: Brent's zeroin (`spody_solver_brent`), the localiser the `events` module runs on the integrator's dense output. Generic over a `double (*)(double, void *)` residual. |
-| `mission` | **Deprecated**, to be removed: top-level orchestration that ties a spacecraft, force model, integrator, and output stream into a single simulation. The SpOdy app does not use it. |
-| `io` | Buffered file I/O helpers for trajectory and diagnostic dumps, and the text log mirror (`spody_log_printf` / `spody_log_eprintf` / `spody_log_open_mirror`): every diagnosis the library prints goes through it, so it lands in the host's log file too. |
+| `io` | The text log mirror (`spody_log_printf` / `spody_log_eprintf` / `spody_log_open_mirror`): every diagnosis the library prints goes through it, so it lands in the host's log file too. The run loop, the output files and their formats belong to the host (the SpOdy app drives the integrator and events itself). |
 | `math` | Shared math utilities (rotation matrices, vector ops). |
 | `mapping` | Cross-platform memory-mapped file I/O (used by the `ephemeris` loader; EOP and space weather are read into memory). |
 | `version` | Compile-time macros + runtime accessors for the library version, git hash (with `-dirty` flag), and build timestamp. |
@@ -119,7 +118,6 @@ spody-core/
 │   ├── spody_kepler.h
 │   ├── spody_mapping.h
 │   ├── spody_math.h
-│   ├── spody_mission.h
 │   ├── spody_nrlmsise00.h
 │   ├── spody_oem.h
 │   ├── spody_sgp4.h

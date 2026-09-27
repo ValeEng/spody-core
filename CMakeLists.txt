@@ -28,7 +28,7 @@
 # =============================================================================
 
 cmake_minimum_required(VERSION 3.10)
-project(spody_core VERSION 1.2.0 LANGUAGES C)
+project(spody_core VERSION 2.0.0 LANGUAGES C)
 
 # -----------------------------------------------------------------------------
 # User-configurable options
@@ -165,7 +165,6 @@ set(SOURCES
     src/spody_kepler.c
     src/spody_mapping.c
     src/spody_math.c
-    src/spody_mission.c
     src/spody_nrlmsise00.c
     src/spody_oem.c
     src/spody_gp.c

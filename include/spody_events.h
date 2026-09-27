@@ -47,8 +47,8 @@ extern "C" {
  *   `refined` flag falls back to step-boundary precision.
  *
  * Threading:
- *   SpodyEvent is small and copyable. Mission keeps a caller-owned
- *   array of events; each Mission (per-thread) has its own array.
+ *   SpodyEvent is small and copyable. The caller owns the array of
+ *   events; each thread (one run each) has its own array.
  * ============================================================ */
 
 /* Kinds of supported events. The enum is open: adding new kinds (e.g.
@@ -298,9 +298,9 @@ int spody_event_check_refined(SpodyEvent *ev,
                               const ForceModelContext *ctx,
                               const IntegratorAllData *integ);
 
-/* On-disk record for the events log (magic SPDYEVNT). One record is
- * appended every time an event triggers; the runtime writes this struct
- * verbatim. 80 bytes total, no internal padding on standard ABIs. */
+/* On-disk record for an events log: one record per trigger, written
+ * verbatim (the SpOdy app's SPDYEVT_ files). 80 bytes total, no
+ * internal padding on standard ABIs. */
 typedef struct {
     double t;                       /* sim time (s)                       */
     int    kind;                    /* spody_event_kind                   */

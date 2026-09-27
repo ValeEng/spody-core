@@ -37,7 +37,6 @@ extern "C" {
 #include "spody_forcemodels.h"
 #include "spody_events.h"
 #include "spody_io.h"
-#include "spody_mission.h"
 #include "spody_math.h"
 #include "spody_interp.h"
 #include "spody_const.h"
