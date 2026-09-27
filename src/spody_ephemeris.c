@@ -237,7 +237,6 @@ static int create_binary_ephemeris_file(EphemerisFile_Header *ep, int64_t *old_e
     printf("file loaded\n");
     #endif
 
-    double t_start, t_end;
     size_t record_size = ep->bytes_per_record;
     #if DEBUG_EPHEMERIS == 1
     printf("sizeof(EphemerisFile_Record) : %zu\n", sizeof(EphemerisFile_Record));

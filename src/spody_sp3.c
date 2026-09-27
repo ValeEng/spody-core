@@ -30,7 +30,7 @@
  *   for SP3-derived references.
  *
  * SP3 wire format we READ (subset sufficient for IGS orbit files):
- *   - Header rows up to and including any line starting with "/* ";
+ *   - Header rows up to and including the comment lines (slash-star);
  *     we read until the body keywords ("*  YYYY MM DD ..." or "P<id>")
  *     start appearing -- the converter does not validate the header.
  *   - An epoch row is exactly "*  YYYY MM DD hh mm ss.ssssssss" with
