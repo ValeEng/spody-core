@@ -129,22 +129,8 @@ typedef struct MappedIAU2006Data {
     IAU2006Series s_xy;  /* CIO locator quantity s(t)+XY/2    (tab5.2d) */
 } MappedIAU2006Data;
 
-/* Node spacing of the (X, Y, s) interpolation grid, in seconds.
- *
- * The series costs ~70 us to evaluate -- 3084 terms, each a 14-term
- * linear combination plus a sine and a cosine -- and the Earth force
- * model needs it at every RHS evaluation, 78k times over a week-long
- * GNSS propagation. X and Y are smooth, moving about 650 and 340 mas
- * respectively over eight days, so a cubic through hourly nodes
- * reproduces them to 3e-7 mas: roughly 40 nanometres at GNSS radius,
- * six orders of magnitude below the millimetre these runs care about
- * and two orders below the uncertainty of the EOP inputs themselves.
- *
- * ERA and polar motion are deliberately NOT interpolated. ERA advances
- * 15 arcsec per second, so interpolating it would be the one thing
- * here that actually costs accuracy, and both are cheap closed forms
- * anyway. */
-#define SPODY_XYS_NODE_S 3600.0
+/* Node spacing of the (X, Y, s) interpolation grid: SPODY_XYS_NODE_S
+ * in spody_const.h (the GUI twin reads it from there). */
 
 /* Points in the interpolation stencil. Four gives a cubic. */
 #define SPODY_XYS_STENCIL 4

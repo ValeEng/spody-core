@@ -170,6 +170,24 @@ extern "C" {
     // round-off of the matrix entries far below it.
 #define SPODY_BF_OMEGA_FD_STEP_S 60.0
 
+    // Node spacing of the IAU 2006 (X, Y, s) interpolation grid in
+    // spody_iau2006_xys_interp, in seconds.
+    //
+    // The series costs ~70 us to evaluate -- 3084 terms, each a 14-term
+    // linear combination plus a sine and a cosine -- and the Earth force
+    // model needs it at every RHS evaluation, 78k times over a week-long
+    // GNSS propagation. X and Y are smooth, moving about 650 and 340 mas
+    // respectively over eight days, so a cubic through hourly nodes
+    // reproduces them to 3e-7 mas: roughly 40 nanometres at GNSS radius,
+    // six orders of magnitude below the millimetre these runs care about
+    // and two orders below the uncertainty of the EOP inputs themselves.
+    //
+    // ERA and polar motion are deliberately NOT interpolated. ERA advances
+    // 15 arcsec per second, so interpolating it would be the one thing
+    // here that actually costs accuracy, and both are cheap closed forms
+    // anyway.
+#define SPODY_XYS_NODE_S 3600.0
+
     // WGS-84 reference ellipsoid (NGA.STND.0036). Used for the
     // ECEF -> geodetic conversion feeding the Earth atmosphere model
     // (NRLMSISE-00 takes geodetic latitude/altitude). Distinct from
