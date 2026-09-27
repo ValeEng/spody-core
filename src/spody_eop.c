@@ -43,6 +43,7 @@
 
 #include "spody_const.h"
 #include "spody_time.h"
+#include "spody_io.h"
 
 /* ----------------------------------------------------------------------
  * Text parser for finals2000A.all
@@ -98,8 +99,8 @@ int spody_setup_MappedEOPData(MappedEOPData *med, const char *filename) {
 
     FILE *fp = fopen(filename, "r");
     if (!fp) {
-        fprintf(stderr, "spody_eop: cannot open '%s': %s\n",
-                filename, strerror(errno));
+        spody_log_eprintf("spody_eop: cannot open '%s': %s\n",
+                  filename, strerror(errno));
         return -1;
     }
 
@@ -117,7 +118,7 @@ int spody_setup_MappedEOPData(MappedEOPData *med, const char *filename) {
         }
     }
     if (n == 0) {
-        fprintf(stderr, "spody_eop: no usable records in '%s'\n", filename);
+        spody_log_eprintf("spody_eop: no usable records in '%s'\n", filename);
         fclose(fp);
         return -1;
     }

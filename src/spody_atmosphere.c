@@ -54,6 +54,7 @@
 #include "spody_const.h"
 #include "spody_interp.h"
 #include "spody_time.h"
+#include "spody_io.h"
 
 /* Gregorian YYYY-MM-DD -> MJD (UTC midnight) via the shared Meeus
  * chain in spody_time.c. Returns -1.0 on malformed input. */
@@ -110,8 +111,8 @@ int spody_setup_MappedSpaceWeatherData(MappedSpaceWeatherData *msw,
 
     FILE *fp = fopen(filename, "r");
     if (!fp) {
-        fprintf(stderr, "spody_atmosphere: cannot open '%s': %s\n",
-                filename, strerror(errno));
+        spody_log_eprintf("spody_atmosphere: cannot open '%s': %s\n",
+                  filename, strerror(errno));
         return -1;
     }
 
@@ -126,7 +127,7 @@ int spody_setup_MappedSpaceWeatherData(MappedSpaceWeatherData *msw,
         ++n;
     }
     if (n == 0) {
-        fprintf(stderr, "spody_atmosphere: no rows in '%s'\n", filename);
+        spody_log_eprintf("spody_atmosphere: no rows in '%s'\n", filename);
         fclose(fp);
         return -1;
     }
@@ -368,8 +369,8 @@ int spody_setup_MappedDensityScale(MappedDensityScale *mds,
 
     FILE *fp = fopen(filename, "r");
     if (!fp) {
-        fprintf(stderr, "spody_atmosphere: cannot open '%s': %s\n",
-                filename, strerror(errno));
+        spody_log_eprintf("spody_atmosphere: cannot open '%s': %s\n",
+                  filename, strerror(errno));
         return -1;
     }
 
@@ -384,8 +385,8 @@ int spody_setup_MappedDensityScale(MappedDensityScale *mds,
         ++n;
     }
     if (n == 0) {
-        fprintf(stderr, "spody_atmosphere: no density-scale nodes in "
-                        "'%s'\n", filename);
+        spody_log_eprintf("spody_atmosphere: no density-scale nodes in "
+                          "'%s'\n", filename);
         fclose(fp);
         return -1;
     }
@@ -412,20 +413,20 @@ int spody_setup_MappedDensityScale(MappedDensityScale *mds,
         double mjd = 0.0, k = 0.0;
         if (nf < 2 || !csv_to_double(fields[0], &mjd)
                    || !csv_to_double(fields[1], &k)) {
-            fprintf(stderr, "spody_atmosphere: '%s' line %zu: expected "
-                            "'mjd,k'\n", filename, lineno);
+            spody_log_eprintf("spody_atmosphere: '%s' line %zu: expected "
+                              "'mjd,k'\n", filename, lineno);
             goto fail;
         }
         if (!isfinite(k) || k <= 0.0) {
-            fprintf(stderr, "spody_atmosphere: '%s' line %zu: density "
-                            "scale must be positive and finite (got "
-                            "%g)\n", filename, lineno, k);
+            spody_log_eprintf("spody_atmosphere: '%s' line %zu: density "
+                              "scale must be positive and finite (got "
+                              "%g)\n", filename, lineno, k);
             goto fail;
         }
         if (i > 0 && mjd <= mds->mjd[i - 1]) {
-            fprintf(stderr, "spody_atmosphere: '%s' line %zu: node "
-                            "epochs must be strictly ascending\n",
-                    filename, lineno);
+            spody_log_eprintf("spody_atmosphere: '%s' line %zu: node "
+                              "epochs must be strictly ascending\n",
+                      filename, lineno);
             goto fail;
         }
         mds->mjd[i] = mjd;

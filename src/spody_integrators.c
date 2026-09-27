@@ -19,6 +19,7 @@
 #include <math.h>
 #include "spody_integrators.h"
 #include "spody_interp.h"   /* spody_hermite_cubic_1d for dense output */
+#include "spody_io.h"
 
 //----- DP45 well-known constants (hardcoded, do not expose in options) ------
 
@@ -441,7 +442,7 @@ static int step_rkdp45(IntegratorAllData *integ) {
 
     } while (steps < RKDP45_RETRIES_PER_STEP);
 
-    printf("[RKDP45_05][MAX_ITER] !Iteration limit reached! ---> Bad constraints\n");
+    spody_log_eprintf("[RKDP45_05][MAX_ITER] !Iteration limit reached! ---> Bad constraints\n");
     return SPODY_INTEG_ERR_MAX_STEPS;
 }
 

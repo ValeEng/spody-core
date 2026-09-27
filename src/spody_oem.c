@@ -38,6 +38,7 @@
 #include "spody_oem.h"
 #include "spody_const.h"
 #include "spody_time.h"
+#include "spody_io.h"
 
 /* Static offsets carried by the SpOdy SPDYOUT_ format. Kept in sync
  * with spody/src/sim_run.c -- see the comment block in spody_oem.h.
@@ -143,10 +144,10 @@ static int oem_scan_file(FILE *fin,
                 if      (strcmp(value, "UTC") == 0) time_system = OEM_TS_UTC;
                 else if (strcmp(value, "TDB") == 0) time_system = OEM_TS_TDB;
                 else {
-                    fprintf(stderr,
-                        "oem: '%s' line %ld: unsupported TIME_SYSTEM '%s' "
-                        "(supported: UTC, TDB)\n",
-                        input_oem, line_no, value);
+                    spody_log_eprintf(
+                           "oem: '%s' line %ld: unsupported TIME_SYSTEM '%s' "
+                           "(supported: UTC, TDB)\n",
+                           input_oem, line_no, value);
                     return 1;
                 }
             }
@@ -163,19 +164,19 @@ static int oem_scan_file(FILE *fin,
          * still parse and the error points at real data. */
         if (!frame_checked) {
             if (time_system == OEM_TS_NONE) {
-                fprintf(stderr,
-                    "oem: '%s' line %ld: data row before a TIME_SYSTEM "
-                    "declaration\n", input_oem, line_no);
+                spody_log_eprintf(
+                       "oem: '%s' line %ld: data row before a TIME_SYSTEM "
+                       "declaration\n", input_oem, line_no);
                 return 1;
             }
             if (strcmp(ref_frame, "ICRF")    != 0 &&
                 strcmp(ref_frame, "EME2000") != 0 &&
                 strcmp(ref_frame, "J2000")   != 0) {
-                fprintf(stderr,
-                    "oem: '%s' line %ld: unsupported REF_FRAME '%s' "
-                    "(supported: ICRF, EME2000, J2000)\n",
-                    input_oem, line_no,
-                    ref_frame[0] ? ref_frame : "(none)");
+                spody_log_eprintf(
+                       "oem: '%s' line %ld: unsupported REF_FRAME '%s' "
+                       "(supported: ICRF, EME2000, J2000)\n",
+                       input_oem, line_no,
+                       ref_frame[0] ? ref_frame : "(none)");
                 return 1;
             }
             frame_checked = 1;
@@ -189,9 +190,9 @@ static int oem_scan_file(FILE *fin,
                 &state[0], &state[1], &state[2],
                 &state[3], &state[4], &state[5]);
         if (n_fields != 12) {
-            fprintf(stderr,
-                "oem: '%s' line %ld: malformed ephemeris row "
-                "(parsed %d of 12 fields)\n", input_oem, line_no, n_fields);
+            spody_log_eprintf(
+                   "oem: '%s' line %ld: malformed ephemeris row "
+                   "(parsed %d of 12 fields)\n", input_oem, line_no, n_fields);
             return 1;
         }
 
@@ -235,8 +236,8 @@ static int oem_scan_file(FILE *fin,
             state[3], state[4], state[5]
         };
         if (fwrite(rec, sizeof(double), 7, fout) != 7) {
-            fprintf(stderr, "oem: short write at record %zu (et=%.6f)\n",
-                    *n_written_inout, et);
+            spody_log_eprintf("oem: short write at record %zu (et=%.6f)\n",
+                      *n_written_inout, et);
             return 1;
         }
         *et_last_inout = et;
@@ -251,23 +252,23 @@ int spody_convert_oem_to_state_icrf(int n_inputs,
                                     const char *const *input_oem_paths,
                                     const char *output_bin) {
     if (n_inputs <= 0 || !input_oem_paths || !output_bin) {
-        fprintf(stderr, "oem: NULL argument or empty input list\n");
+        spody_log_eprintf("oem: NULL argument or empty input list\n");
         return 1;
     }
     for (int i = 0; i < n_inputs; ++i) {
         if (!input_oem_paths[i]) {
-            fprintf(stderr, "oem: NULL input path at index %d\n", i);
+            spody_log_eprintf("oem: NULL input path at index %d\n", i);
             return 1;
         }
     }
 
     FILE *fout = fopen(output_bin, "wb");
     if (!fout) {
-        fprintf(stderr, "oem: cannot open output '%s'\n", output_bin);
+        spody_log_eprintf("oem: cannot open output '%s'\n", output_bin);
         return 1;
     }
     if (write_oem_out_header(fout) != 0) {
-        fprintf(stderr, "oem: cannot write output header\n");
+        spody_log_eprintf("oem: cannot write output header\n");
         fclose(fout);
         return 1;
     }
@@ -282,7 +283,7 @@ int spody_convert_oem_to_state_icrf(int n_inputs,
         const char *input_oem = input_oem_paths[i];
         FILE *fin = fopen(input_oem, "r");
         if (!fin) {
-            fprintf(stderr, "oem: cannot open input '%s'\n", input_oem);
+            spody_log_eprintf("oem: cannot open input '%s'\n", input_oem);
             rc = 1;
             break;
         }
@@ -297,24 +298,24 @@ int spody_convert_oem_to_state_icrf(int n_inputs,
      * flag or at the final flush in fclose, not at the fwrite calls. */
     int write_failed = ferror(fout);
     if (fclose(fout) != 0 || write_failed) {
-        fprintf(stderr, "oem: write failed on '%s': %s\n",
-                output_bin, strerror(errno));
+        spody_log_eprintf("oem: write failed on '%s': %s\n",
+                  output_bin, strerror(errno));
         rc = 1;
     }
 
     if (rc == 0) {
         if (n_written == 0) {
-            fprintf(stderr,
-                "oem: WARNING -- no ephemeris records found across %d "
-                "input file%s\n", n_inputs, n_inputs == 1 ? "" : "s");
+            spody_log_eprintf(
+                   "oem: WARNING -- no ephemeris records found across %d "
+                   "input file%s\n", n_inputs, n_inputs == 1 ? "" : "s");
         } else {
             double duration_h = (et_last - et_first) / 3600.0;
-            fprintf(stderr,
-                "oem: %zu records (%d file%s, et=%.6f..%.6f, %.3f h, "
-                "%zu overlapping record%s skipped)\n",
-                n_written, n_inputs, n_inputs == 1 ? "" : "s",
-                et_first, et_last, duration_h,
-                n_skipped, n_skipped == 1 ? "" : "s");
+            spody_log_eprintf(
+                   "oem: %zu records (%d file%s, et=%.6f..%.6f, %.3f h, "
+                   "%zu overlapping record%s skipped)\n",
+                   n_written, n_inputs, n_inputs == 1 ? "" : "s",
+                   et_first, et_last, duration_h,
+                   n_skipped, n_skipped == 1 ? "" : "s");
         }
     }
     return rc;

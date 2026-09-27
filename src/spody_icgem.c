@@ -39,6 +39,7 @@
 #include <ctype.h>
 
 #include "spody_icgem.h"
+#include "spody_io.h"
 
 /* Line buffer. ICGEM body rows can carry l, m, C, S, sigma_C, sigma_S
  * plus an optional trailing comment; 1024 covers anything seen in the
@@ -101,13 +102,13 @@ int spody_convert_icgem_to_tab(const char *input_gfc,
                                const char *output_tab,
                                int max_degree) {
     if (!input_gfc || !output_tab) {
-        fprintf(stderr, "icgem: NULL input or output path\n");
+        spody_log_eprintf("icgem: NULL input or output path\n");
         return 1;
     }
 
     FILE *fin = fopen(input_gfc, "r");
     if (!fin) {
-        fprintf(stderr, "icgem: cannot open input '%s'\n", input_gfc);
+        spody_log_eprintf("icgem: cannot open input '%s'\n", input_gfc);
         return 1;
     }
 
@@ -156,17 +157,17 @@ int spody_convert_icgem_to_tab(const char *input_gfc,
     }
 
     if (!in_body) {
-        fprintf(stderr,
-            "icgem: header has no 'end_of_head' marker in '%s'\n",
-            input_gfc);
+        spody_log_eprintf(
+               "icgem: header has no 'end_of_head' marker in '%s'\n",
+               input_gfc);
         fclose(fin);
         return 1;
     }
     if (gm_m3s2 <= 0.0 || radius_m <= 0.0 || declared_max_deg < 2) {
-        fprintf(stderr,
-            "icgem: header missing earth_gravity_constant, radius, "
-            "or max_degree (got GM=%.6e, R=%.6e, N=%d)\n",
-            gm_m3s2, radius_m, declared_max_deg);
+        spody_log_eprintf(
+               "icgem: header missing earth_gravity_constant, radius, "
+               "or max_degree (got GM=%.6e, R=%.6e, N=%d)\n",
+               gm_m3s2, radius_m, declared_max_deg);
         fclose(fin);
         return 1;
     }
@@ -174,10 +175,10 @@ int spody_convert_icgem_to_tab(const char *input_gfc,
     int output_N = (max_degree > 0 && max_degree < declared_max_deg)
                    ? max_degree : declared_max_deg;
     if (max_degree > declared_max_deg) {
-        fprintf(stderr,
-            "icgem: requested max_degree=%d exceeds file's declared "
-            "max_degree=%d; truncating to %d.\n",
-            max_degree, declared_max_deg, declared_max_deg);
+        spody_log_eprintf(
+               "icgem: requested max_degree=%d exceeds file's declared "
+               "max_degree=%d; truncating to %d.\n",
+               max_degree, declared_max_deg, declared_max_deg);
     }
 
     /* --- Coefficient storage -------------------------------------- */
@@ -192,9 +193,9 @@ int spody_convert_icgem_to_tab(const char *input_gfc,
     double *sC   = (double *)calloc(tri_size, sizeof(double));
     double *sS   = (double *)calloc(tri_size, sizeof(double));
     if (!C || !S || !sC || !sS) {
-        fprintf(stderr,
-            "icgem: out of memory allocating coefficient triangle "
-            "(N=%d, %zu entries each)\n", output_N, tri_size);
+        spody_log_eprintf(
+               "icgem: out of memory allocating coefficient triangle "
+               "(N=%d, %zu entries each)\n", output_N, tri_size);
         free(C); free(S); free(sC); free(sS);
         fclose(fin);
         return 1;
@@ -262,20 +263,20 @@ int spody_convert_icgem_to_tab(const char *input_gfc,
     /* Operator-visible summary. Goes to stderr so the converted file's
      * stdout (none here, but the convention is consistent with `spody
      * convert ephemeris`) is reserved for downstream tooling. */
-    fprintf(stderr,
-        "icgem: %s  GM=%.10e m^3/s^2  R=%.4f m  N_declared=%d  "
-        "tide=%s  errors=%s\n",
-        model_name, gm_m3s2, radius_m, declared_max_deg,
-        tide_system, errors_style);
-    fprintf(stderr,
-        "icgem: parsed %zu static rows (truncation N=%d kept all l<=N; "
-        "%zu dropped above, %zu time-variable skipped, %zu unknown)\n",
-        n_read, output_N, n_above_n, n_time_variable, n_unknown);
+    spody_log_eprintf(
+           "icgem: %s  GM=%.10e m^3/s^2  R=%.4f m  N_declared=%d  "
+           "tide=%s  errors=%s\n",
+           model_name, gm_m3s2, radius_m, declared_max_deg,
+           tide_system, errors_style);
+    spody_log_eprintf(
+           "icgem: parsed %zu static rows (truncation N=%d kept all l<=N; "
+           "%zu dropped above, %zu time-variable skipped, %zu unknown)\n",
+           n_read, output_N, n_above_n, n_time_variable, n_unknown);
 
     /* --- Write the .tab ------------------------------------------- */
     FILE *fout = fopen(output_tab, "w");
     if (!fout) {
-        fprintf(stderr, "icgem: cannot open output '%s'\n", output_tab);
+        spody_log_eprintf("icgem: cannot open output '%s'\n", output_tab);
         free(C); free(S); free(sC); free(sS);
         return 1;
     }
@@ -312,7 +313,7 @@ int spody_convert_icgem_to_tab(const char *input_gfc,
             ++rows_written;
         }
         if (n % 100 == 0 || n == output_N) {
-            fprintf(stderr, "icgem: n=%d / %d writed\n", n, output_N);
+            spody_log_eprintf("icgem: n=%d / %d writed\n", n, output_N);
             fflush(stderr);
         }
     }
@@ -321,11 +322,11 @@ int spody_convert_icgem_to_tab(const char *input_gfc,
     int close_failed = fclose(fout) != 0;
     free(C); free(S); free(sC); free(sS);
     if (write_failed || close_failed) {
-        fprintf(stderr, "icgem: write failed on '%s': %s\n",
-                output_tab, strerror(errno));
+        spody_log_eprintf("icgem: write failed on '%s': %s\n",
+                  output_tab, strerror(errno));
         return 1;
     }
-    fprintf(stderr,
-        "icgem: wrote %zu rows to %s\n", rows_written, output_tab);
+    spody_log_eprintf(
+           "icgem: wrote %zu rows to %s\n", rows_written, output_tab);
     return 0;
 }

@@ -32,6 +32,7 @@
  * formulas (which carry IERS / Simon / Souchay citations inline). */
 #include "spody_const.h"
 #include "spody_time.h"
+#include "spody_io.h"
 
 /* Filenames inside the IAU 2006 directory (matches the names IERS
  * publishes at chapter5/additional_info/). */
@@ -184,8 +185,8 @@ static int _parse_series(IAU2006Series *out, const char *path) {
 
     FILE *fp = fopen(path, "r");
     if (!fp) {
-        fprintf(stderr, "spody_earth_orientation: cannot open '%s': %s\n",
-                path, strerror(errno));
+        spody_log_eprintf("spody_earth_orientation: cannot open '%s': %s\n",
+                  path, strerror(errno));
         return -1;
     }
 
@@ -205,8 +206,8 @@ static int _parse_series(IAU2006Series *out, const char *path) {
             }
             if (in_poly_block) {
                 if (_parse_polynomial(line, out->poly) != 0) {
-                    fprintf(stderr, "spody_earth_orientation: "
-                            "polynomial parse failed in '%s'\n", path);
+                    spody_log_eprintf("spody_earth_orientation: "
+                              "polynomial parse failed in '%s'\n", path);
                     goto fail;
                 }
                 poly_done = 1;
@@ -222,13 +223,13 @@ static int _parse_series(IAU2006Series *out, const char *path) {
         }
     }
     if (max_j < 0 || total == 0) {
-        fprintf(stderr, "spody_earth_orientation: no term sections "
-                "found in '%s'\n", path);
+        spody_log_eprintf("spody_earth_orientation: no term sections "
+                  "found in '%s'\n", path);
         goto fail;
     }
     if (!poly_done) {
-        fprintf(stderr, "spody_earth_orientation: no polynomial line "
-                "in '%s'\n", path);
+        spody_log_eprintf("spody_earth_orientation: no polynomial line "
+                  "in '%s'\n", path);
         goto fail;
     }
 

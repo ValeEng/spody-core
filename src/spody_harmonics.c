@@ -18,6 +18,8 @@
 #include <string.h>
 #include <math.h>
 #include "spody_harmonics.h"
+#include "spody_io.h"
+#include <errno.h>
 
 
 static int read_spherical_harmonics_file(FILE *file, HarmonicGravityData *pm, int degree) {
@@ -48,7 +50,7 @@ static int read_spherical_harmonics_file(FILE *file, HarmonicGravityData *pm, in
     // but we limit to 'degree' requested by user.
     double file_N = strtod(token, NULL);
     if (degree > (int)file_N)  {
-        printf(" Degree %d out of bounds. File maximum degree is %d\n", degree, (int)file_N);
+        spody_log_eprintf(" Degree %d out of bounds. File maximum degree is %d\n", degree, (int)file_N);
         return -1;
     }
     pm->N = (degree <= (int)file_N) ? degree : (int)file_N;
@@ -61,7 +63,7 @@ static int read_spherical_harmonics_file(FILE *file, HarmonicGravityData *pm, in
     pm->C = calloc(size, sizeof(double)); // calloc init to 0
     pm->S = calloc(size, sizeof(double));
     if (!pm->C || !pm->S) {
-        fprintf(stderr, "harmonics: out of memory for degree %d\n", pm->N);
+        spody_log_eprintf("harmonics: out of memory for degree %d\n", pm->N);
         goto fail;
     }
 
@@ -80,8 +82,8 @@ static int read_spherical_harmonics_file(FILE *file, HarmonicGravityData *pm, in
         char *tok_c = strtok(NULL, ",");
         char *tok_s = strtok(NULL, ",");
         if (!tok_n || !tok_m || !tok_c || !tok_s) {
-            fprintf(stderr, "harmonics: line %d: expected 'n, m, C, S'\n",
-                    line_no);
+            spody_log_eprintf("harmonics: line %d: expected 'n, m, C, S'\n",
+                      line_no);
             goto fail;
         }
 
@@ -89,8 +91,8 @@ static int read_spherical_harmonics_file(FILE *file, HarmonicGravityData *pm, in
         if (n > pm->N) break; // Stop if beyond desired degree
         int m = (int)strtod(tok_m, NULL);
         if (n < 0 || m < 0 || m > n) {
-            fprintf(stderr, "harmonics: line %d: degree/order n=%d m=%d "
-                    "outside 0 <= m <= n\n", line_no, n, m);
+            spody_log_eprintf("harmonics: line %d: degree/order n=%d m=%d "
+                      "outside 0 <= m <= n\n", line_no, n, m);
             goto fail;
         }
 
@@ -412,7 +414,7 @@ int spody_load_HarmonicGravityData(HarmonicGravityData *hgd, const char *filenam
     
     FILE *file = fopen(filename,"r");
     if (!file) {
-        perror("cannot open file");
+        spody_log_eprintf("cannot open file: %s\n", strerror(errno));
         return -1;
     }
 

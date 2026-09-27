@@ -24,7 +24,7 @@ The library provides a clean, modular API covering the core pillars of orbital m
 - 🧭 **Time & Earth orientation** — IERS leap seconds + SPICE `deltet`, so ET is true TDB end-to-end; EOP reader and the IAU 2006/2000A_R06 inertial-to-ITRS chain
 - 🎯 **Events & solver** — Event detection (impact, eclipse, altitude crossings) with Hermite + Brent localisation, one-shot propagator wrapper
 - 🔄 **Format converters** — ICGEM `.gfc` gravity fields, IGS/MGEX SP3 precise orbits, RINEX-NAV GPS and GLONASS broadcast, CCSDS OEM
-- 🧩 **I/O & mission** — Buffered file output and a top-level mission orchestration layer
+- 🧩 **I/O & logging** — Buffered binary record output and a text log mirror that tees every library and host message to the run's log file (the `mission` orchestration layer is deprecated)
 
 The runtime API is **thread-safe by construction**: shared, read-only data structures
 (ephemeris, gravity coefficients) are decoupled from per-thread query handles, so a
@@ -55,8 +55,8 @@ single dataset can drive many concurrent propagations without contention.
 | `oem` | Reads CCSDS OEM text ephemerides (multi-file, overlap-deduplicated) into an ICRF state reference binary. |
 | `sgp4` | The analytic propagator that GP element sets (TLE / OMM) are fitted inside of. Their elements are *mean* elements of this theory, not an osculating state, so handing them to a numerical integrator is a physical error rather than an approximation: this module is the theory. Equations from Hoots & Roehrich, Spacetrack Report No. 3 (1980), with the corrections documented in Vallado et al., AIAA 2006-6753; output is TEME. Both branches are present: near-Earth SGP4, and SDP4 for element sets whose period reaches 225 min, carrying the lunisolar secular and periodic terms and the two resonance bands (24 h synchronous, 12 h). The resonance is integrated from epoch on every call rather than carried between them, so a state depends on the requested time alone and one element set can be propagated from several threads at once. Conformance is checked against the test cases published with AIAA 2006-6753: all 33 cases agree with the reference vectors to 1.8e-06 km over 634 points. |
 | `solver` | Scalar root finding: Brent's zeroin (`spody_solver_brent`), the localiser the `events` module runs on the integrator's dense output. Generic over a `double (*)(double, void *)` residual. |
-| `mission` | Top-level orchestration that ties a spacecraft, force model, integrator, and output stream into a single simulation. |
-| `io` | Buffered file I/O helpers for trajectory and diagnostic dumps. |
+| `mission` | **Deprecated**, to be removed: top-level orchestration that ties a spacecraft, force model, integrator, and output stream into a single simulation. The SpOdy app does not use it. |
+| `io` | Buffered file I/O helpers for trajectory and diagnostic dumps, and the text log mirror (`spody_log_printf` / `spody_log_eprintf` / `spody_log_open_mirror`): every diagnosis the library prints goes through it, so it lands in the host's log file too. |
 | `math` | Shared math utilities (rotation matrices, vector ops). |
 | `mapping` | Cross-platform memory-mapped file I/O (used by `ephemeris`, `eop`, `atmosphere`). |
 | `version` | Compile-time macros + runtime accessors for the library version, git hash (with `-dirty` flag), and build timestamp. |

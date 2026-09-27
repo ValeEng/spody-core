@@ -54,6 +54,7 @@
 #include "spody_const.h"
 #include "spody_math.h"
 #include "spody_time.h"
+#include "spody_io.h"
 
 /* Static offsets carried by the SpOdy SPDYOUT_ format. Kept in sync
  * with spody/src/sim_run.c -- see comment block at the top of the
@@ -146,10 +147,10 @@ static int _sp3_scan_file(FILE *fin,
         const MappedEOPData *eop = ctx->eop->med;
         double mjd_utc = spody_et_to_mjd_utc(cur_et);
         if (!spody_eop_covers_mjd(eop, mjd_utc)) {
-            fprintf(stderr,
-                "sp3: epoch UTC MJD %.5f in '%s' is outside the EOP table "
-                "(UTC MJD %.2f .. %.2f); update finals2000A.all\n",
-                mjd_utc, input_sp3, eop->mjd_first, eop->mjd_last_predicted);
+            spody_log_eprintf(
+                   "sp3: epoch UTC MJD %.5f in '%s' is outside the EOP table "
+                   "(UTC MJD %.2f .. %.2f); update finals2000A.all\n",
+                   mjd_utc, input_sp3, eop->mjd_first, eop->mjd_last_predicted);
             return 1;
         }
 
@@ -170,9 +171,9 @@ static int _sp3_scan_file(FILE *fin,
             0.0, 0.0, 0.0
         };
         if (fwrite(rec, sizeof(double), 7, fout) != 7) {
-            fprintf(stderr,
-                "sp3: short write at record %zu (et=%.6f)\n",
-                *n_records_inout, cur_et);
+            spody_log_eprintf(
+                   "sp3: short write at record %zu (et=%.6f)\n",
+                   *n_records_inout, cur_et);
             return 1;
         }
         *et_last_inout = cur_et;
@@ -182,16 +183,16 @@ static int _sp3_scan_file(FILE *fin,
     }
 
     if (n_records_this == 0) {
-        fprintf(stderr,
-            "sp3: WARNING -- no records written for sat_id '%s' "
-            "(no matching P%s row found in '%s')\n",
-            sat_id, sat_id, input_sp3);
+        spody_log_eprintf(
+               "sp3: WARNING -- no records written for sat_id '%s' "
+               "(no matching P%s row found in '%s')\n",
+               sat_id, sat_id, input_sp3);
     } else {
         double duration_h = (et_last_this - et_first_this) / 3600.0;
-        fprintf(stderr,
-            "sp3: '%s' -> %zu records (sat=%s, et=%.6f..%.6f, %.3f h)\n",
-            input_sp3, n_records_this, sat_id,
-            et_first_this, et_last_this, duration_h);
+        spody_log_eprintf(
+               "sp3: '%s' -> %zu records (sat=%s, et=%.6f..%.6f, %.3f h)\n",
+               input_sp3, n_records_this, sat_id,
+               et_first_this, et_last_this, duration_h);
     }
     return 0;
 }
@@ -205,32 +206,32 @@ int spody_convert_sp3_to_state_icrf(int n_inputs,
                                     const char *iau2006_dir) {
     if (n_inputs <= 0 || !input_sp3_paths || !output_bin ||
         !sat_id || !eop_file || !iau2006_dir) {
-        fprintf(stderr, "sp3: NULL argument or empty input list\n");
+        spody_log_eprintf("sp3: NULL argument or empty input list\n");
         return 1;
     }
     for (int i = 0; i < n_inputs; ++i) {
         if (!input_sp3_paths[i]) {
-            fprintf(stderr, "sp3: NULL input path at index %d\n", i);
+            spody_log_eprintf("sp3: NULL input path at index %d\n", i);
             return 1;
         }
     }
     if (strlen(sat_id) != 3) {
-        fprintf(stderr,
-            "sp3: sat_id must be 3 chars (got '%s', length %zu)\n",
-            sat_id, strlen(sat_id));
+        spody_log_eprintf(
+               "sp3: sat_id must be 3 chars (got '%s', length %zu)\n",
+               sat_id, strlen(sat_id));
         return 1;
     }
 
     /* --- Bring up the EOP + IAU 2006 machinery one-shot --------- */
     MappedEOPData eop_data = {0};
     if (spody_setup_MappedEOPData(&eop_data, eop_file) != 0) {
-        fprintf(stderr, "sp3: cannot load EOP from '%s'\n", eop_file);
+        spody_log_eprintf("sp3: cannot load EOP from '%s'\n", eop_file);
         return 1;
     }
     MappedIAU2006Data iau_data = {0};
     if (spody_setup_MappedIAU2006Data(&iau_data, iau2006_dir) != 0) {
-        fprintf(stderr, "sp3: cannot load IAU 2006 tables from '%s'\n",
-                iau2006_dir);
+        spody_log_eprintf("sp3: cannot load IAU 2006 tables from '%s'\n",
+                  iau2006_dir);
         spody_free_MappedEOPData(&eop_data);
         return 1;
     }
@@ -244,7 +245,7 @@ int spody_convert_sp3_to_state_icrf(int n_inputs,
     /* --- Output (one binary for the whole concatenated track) --- */
     FILE *fout = fopen(output_bin, "wb");
     if (!fout) {
-        fprintf(stderr, "sp3: cannot open output '%s'\n", output_bin);
+        spody_log_eprintf("sp3: cannot open output '%s'\n", output_bin);
         spody_free_MappedIAU2006(&iau_map);
         spody_free_MappedEOP(&eop_map);
         spody_free_MappedIAU2006Data(&iau_data);
@@ -252,7 +253,7 @@ int spody_convert_sp3_to_state_icrf(int n_inputs,
         return 1;
     }
     if (_write_sp3_out_header(fout) != 0) {
-        fprintf(stderr, "sp3: cannot write output header\n");
+        spody_log_eprintf("sp3: cannot write output header\n");
         fclose(fout);
         spody_free_MappedIAU2006(&iau_map);
         spody_free_MappedEOP(&eop_map);
@@ -271,7 +272,7 @@ int spody_convert_sp3_to_state_icrf(int n_inputs,
         const char *input_sp3 = input_sp3_paths[i];
         FILE *fin = fopen(input_sp3, "r");
         if (!fin) {
-            fprintf(stderr, "sp3: cannot open input '%s'\n", input_sp3);
+            spody_log_eprintf("sp3: cannot open input '%s'\n", input_sp3);
             rc = 1;
             break;
         }
@@ -286,18 +287,18 @@ int spody_convert_sp3_to_state_icrf(int n_inputs,
      * flag or at the final flush in fclose, not at the fwrite calls. */
     int write_failed = ferror(fout);
     if (fclose(fout) != 0 || write_failed) {
-        fprintf(stderr, "sp3: write failed on '%s': %s\n",
-                output_bin, strerror(errno));
+        spody_log_eprintf("sp3: write failed on '%s': %s\n",
+                  output_bin, strerror(errno));
         rc = 1;
     }
 
     if (rc == 0 && n_inputs > 1 && n_records_all > 0) {
         double duration_h = (et_last_all - et_first_all) / 3600.0;
-        fprintf(stderr,
-            "sp3: aggregate -> %zu records across %d files "
-            "(sat=%s, et=%.6f..%.6f, %.3f h)\n",
-            n_records_all, n_inputs, sat_id,
-            et_first_all, et_last_all, duration_h);
+        spody_log_eprintf(
+               "sp3: aggregate -> %zu records across %d files "
+               "(sat=%s, et=%.6f..%.6f, %.3f h)\n",
+               n_records_all, n_inputs, sat_id,
+               et_first_all, et_last_all, duration_h);
     }
 
     spody_free_MappedIAU2006(&iau_map);

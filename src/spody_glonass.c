@@ -48,6 +48,7 @@
 #include "spody_const.h"
 #include "spody_math.h"
 #include "spody_time.h"
+#include "spody_io.h"
 
 #define SPODY_GLONASS_OUT_MAGIC      "SPDYOUT_"
 #define SPODY_GLONASS_OUT_VERSION    1u
@@ -113,9 +114,9 @@ static int _glonass_scan_file(FILE *fin,
         }
     }
     if (!in_body) {
-        fprintf(stderr,
-            "glonass: input '%s' has no 'END OF HEADER' marker\n",
-            input_rnx);
+        spody_log_eprintf(
+               "glonass: input '%s' has no 'END OF HEADER' marker\n",
+               input_rnx);
         return 1;
     }
 
@@ -221,10 +222,10 @@ static int _glonass_scan_file(FILE *fin,
         const MappedEOPData *eop = ctx->eop->med;
         double mjd_utc = spody_et_to_mjd_utc(et);
         if (!spody_eop_covers_mjd(eop, mjd_utc)) {
-            fprintf(stderr,
-                "glonass: epoch UTC MJD %.5f in '%s' is outside the EOP "
-                "table (UTC MJD %.2f .. %.2f); update finals2000A.all\n",
-                mjd_utc, input_rnx, eop->mjd_first, eop->mjd_last_predicted);
+            spody_log_eprintf(
+                   "glonass: epoch UTC MJD %.5f in '%s' is outside the EOP "
+                   "table (UTC MJD %.2f .. %.2f); update finals2000A.all\n",
+                   mjd_utc, input_rnx, eop->mjd_first, eop->mjd_last_predicted);
             return 1;
         }
 
@@ -279,9 +280,9 @@ static int _glonass_scan_file(FILE *fin,
             v_icrf[0], v_icrf[1], v_icrf[2]
         };
         if (fwrite(rec, sizeof(double), 7, fout) != 7) {
-            fprintf(stderr,
-                "glonass: short write at record %zu (et=%.6f)\n",
-                *n_written_inout, et);
+            spody_log_eprintf(
+                   "glonass: short write at record %zu (et=%.6f)\n",
+                   *n_written_inout, et);
             return 1;
         }
         *et_last_inout = et;
@@ -291,17 +292,17 @@ static int _glonass_scan_file(FILE *fin,
     }
 
     if (n_written_this == 0) {
-        fprintf(stderr,
-            "glonass: WARNING -- no records written for sat_id '%s' "
-            "(scanned %zu total RINEX records in '%s')\n",
-            sat_id, n_total, input_rnx);
+        spody_log_eprintf(
+               "glonass: WARNING -- no records written for sat_id '%s' "
+               "(scanned %zu total RINEX records in '%s')\n",
+               sat_id, n_total, input_rnx);
     } else {
         double duration_h = (et_last_this - et_first_this) / 3600.0;
-        fprintf(stderr,
-            "glonass: '%s' -> %zu records (sat=%s, et=%.6f..%.6f, "
-            "%.3f h, scanned %zu nav messages)\n",
-            input_rnx, n_written_this, sat_id,
-            et_first_this, et_last_this, duration_h, n_total);
+        spody_log_eprintf(
+               "glonass: '%s' -> %zu records (sat=%s, et=%.6f..%.6f, "
+               "%.3f h, scanned %zu nav messages)\n",
+               input_rnx, n_written_this, sat_id,
+               et_first_this, et_last_this, duration_h, n_total);
     }
 
     *n_total_out = n_total;
@@ -317,32 +318,32 @@ int spody_convert_glonass_to_state_icrf(int n_inputs,
                                         const char *iau2006_dir) {
     if (n_inputs <= 0 || !input_rnx_paths || !output_bin ||
         !sat_id || !eop_file || !iau2006_dir) {
-        fprintf(stderr, "glonass: NULL argument or empty input list\n");
+        spody_log_eprintf("glonass: NULL argument or empty input list\n");
         return 1;
     }
     for (int i = 0; i < n_inputs; ++i) {
         if (!input_rnx_paths[i]) {
-            fprintf(stderr, "glonass: NULL input path at index %d\n", i);
+            spody_log_eprintf("glonass: NULL input path at index %d\n", i);
             return 1;
         }
     }
     if (strlen(sat_id) != 3 || (sat_id[0] != 'R')) {
-        fprintf(stderr,
-            "glonass: sat_id must be 3 chars starting with 'R' "
-            "(got '%s')\n", sat_id);
+        spody_log_eprintf(
+               "glonass: sat_id must be 3 chars starting with 'R' "
+               "(got '%s')\n", sat_id);
         return 1;
     }
 
     /* --- Bring up EOP + IAU 2006 -------------------------------- */
     MappedEOPData eop_data = {0};
     if (spody_setup_MappedEOPData(&eop_data, eop_file) != 0) {
-        fprintf(stderr, "glonass: cannot load EOP from '%s'\n", eop_file);
+        spody_log_eprintf("glonass: cannot load EOP from '%s'\n", eop_file);
         return 1;
     }
     MappedIAU2006Data iau_data = {0};
     if (spody_setup_MappedIAU2006Data(&iau_data, iau2006_dir) != 0) {
-        fprintf(stderr, "glonass: cannot load IAU 2006 from '%s'\n",
-                iau2006_dir);
+        spody_log_eprintf("glonass: cannot load IAU 2006 from '%s'\n",
+                  iau2006_dir);
         spody_free_MappedEOPData(&eop_data);
         return 1;
     }
@@ -355,7 +356,7 @@ int spody_convert_glonass_to_state_icrf(int n_inputs,
     /* --- Output (one binary for the whole concatenated track) --- */
     FILE *fout = fopen(output_bin, "wb");
     if (!fout) {
-        fprintf(stderr, "glonass: cannot open output '%s'\n", output_bin);
+        spody_log_eprintf("glonass: cannot open output '%s'\n", output_bin);
         spody_free_MappedIAU2006(&iau_map);
         spody_free_MappedEOP(&eop_map);
         spody_free_MappedIAU2006Data(&iau_data);
@@ -363,7 +364,7 @@ int spody_convert_glonass_to_state_icrf(int n_inputs,
         return 1;
     }
     if (_write_glonass_out_header(fout) != 0) {
-        fprintf(stderr, "glonass: cannot write output header\n");
+        spody_log_eprintf("glonass: cannot write output header\n");
         fclose(fout);
         spody_free_MappedIAU2006(&iau_map);
         spody_free_MappedEOP(&eop_map);
@@ -383,7 +384,7 @@ int spody_convert_glonass_to_state_icrf(int n_inputs,
         const char *input_rnx = input_rnx_paths[i];
         FILE *fin = fopen(input_rnx, "r");
         if (!fin) {
-            fprintf(stderr, "glonass: cannot open input '%s'\n", input_rnx);
+            spody_log_eprintf("glonass: cannot open input '%s'\n", input_rnx);
             rc = 1;
             break;
         }
@@ -400,26 +401,26 @@ int spody_convert_glonass_to_state_icrf(int n_inputs,
      * flag or at the final flush in fclose, not at the fwrite calls. */
     int write_failed = ferror(fout);
     if (fclose(fout) != 0 || write_failed) {
-        fprintf(stderr, "glonass: write failed on '%s': %s\n",
-                output_bin, strerror(errno));
+        spody_log_eprintf("glonass: write failed on '%s': %s\n",
+                  output_bin, strerror(errno));
         rc = 1;
     }
 
     if (rc == 0) {
         if (n_written_all == 0) {
-            fprintf(stderr,
-                "glonass: WARNING -- no records written for sat_id '%s' "
-                "across %d input file%s (scanned %zu RINEX nav messages "
-                "total)\n",
-                sat_id, n_inputs, n_inputs == 1 ? "" : "s", n_total_all);
+            spody_log_eprintf(
+                   "glonass: WARNING -- no records written for sat_id '%s' "
+                   "across %d input file%s (scanned %zu RINEX nav messages "
+                   "total)\n",
+                   sat_id, n_inputs, n_inputs == 1 ? "" : "s", n_total_all);
         } else if (n_inputs > 1) {
             double duration_h = (et_last_all - et_first_all) / 3600.0;
-            fprintf(stderr,
-                "glonass: aggregate -> %zu records across %d files "
-                "(sat=%s, et=%.6f..%.6f, %.3f h, scanned %zu nav "
-                "messages total)\n",
-                n_written_all, n_inputs, sat_id,
-                et_first_all, et_last_all, duration_h, n_total_all);
+            spody_log_eprintf(
+                   "glonass: aggregate -> %zu records across %d files "
+                   "(sat=%s, et=%.6f..%.6f, %.3f h, scanned %zu nav "
+                   "messages total)\n",
+                   n_written_all, n_inputs, sat_id,
+                   et_first_all, et_last_all, duration_h, n_total_all);
         }
     }
 

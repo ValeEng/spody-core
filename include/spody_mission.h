@@ -26,6 +26,14 @@ extern "C" {
 #include "spody_io.h"            /* SpodyLogBuffer                                */
 
 /* ============================================================
+ * DEPRECATED. The SpOdy app does not use this module: it drives the
+ * integrator, the force models and its own output writers directly.
+ * Kept building for existing callers only; no new code should depend
+ * on it, it is not maintained alongside the rest of the library (its
+ * messages still print straight to stderr instead of going through
+ * spody_log_eprintf), and it will be removed in a future release.
+ * ============================================================
+ *
  * Mission orchestration
  *
  * The Mission ties together the four moving parts of a propagation:

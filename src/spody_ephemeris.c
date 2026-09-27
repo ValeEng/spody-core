@@ -14,6 +14,9 @@
  * limitations under the License.
  */
 #include "spody_ephemeris.h"
+#include "spody_io.h"
+#include <errno.h>
+#include <string.h>
 
 static int read_ephemeris_file_header(FILE *file, EphemerisFile_Header *ep ) {
     //parsing for de440
@@ -159,9 +162,9 @@ static int read_record_block(FILE *fp, EphemerisFile_Header *ep, EphemerisFile_R
     if (eprec->number_coefficients_per_record != ep->number_coefficients_per_record) {
         /* Real parser error -- left unconditional so the user is told
          * the on-disk ASCII is inconsistent with its own header. */
-        printf("Warning: Expected %d coefficients, but found %d in block %d\n", n_coeff_expected, eprec->number_coefficients_per_record, eprec->record_number);
-        printf("HEADER info diverge from data blocks read.\n");
-        printf("Check the ephemeris file integrity.\n");
+        spody_log_eprintf("Warning: Expected %d coefficients, but found %d in block %d\n", n_coeff_expected, eprec->number_coefficients_per_record, eprec->record_number);
+        spody_log_eprintf("HEADER info diverge from data blocks read.\n");
+        spody_log_eprintf("Check the ephemeris file integrity.\n");
         return 0;
     }else{
         n_coeff_expected = eprec->number_coefficients_per_record;
@@ -209,10 +212,10 @@ static int create_binary_ephemeris_file(EphemerisFile_Header *ep, int64_t *old_e
     printf("in create binary\n");
     #endif
     FILE *fp_ascp = fopen(ascp_filename, "r");
-    if (!fp_ascp) { perror("cannot open ascp file"); return -1; }
+    if (!fp_ascp) { spody_log_eprintf("cannot open ascp file: %s\n", strerror(errno)); return -1; }
 
     FILE *fp_bin = fopen(bin_filename, "ab");  // "ab" for append mode
-    if (!fp_bin) { perror("cannot open bin file"); fclose(fp_ascp); return -1; }
+    if (!fp_bin) { spody_log_eprintf("cannot open bin file: %s\n", strerror(errno)); fclose(fp_ascp); return -1; }
     #if DEBUG_EPHEMERIS == 1
     printf("file loaded\n");
     #endif
@@ -227,7 +230,7 @@ static int create_binary_ephemeris_file(EphemerisFile_Header *ep, int64_t *old_e
 
     EphemerisFile_Record *eprec = malloc(record_size);
     if (!eprec) {
-        perror("Error memory allocation for EphemerisFile_Record");
+        spody_log_eprintf("Error memory allocation for EphemerisFile_Record: %s\n", strerror(errno));
         fclose(fp_ascp);
         fclose(fp_bin);
         return -1;
@@ -251,7 +254,7 @@ static int create_binary_ephemeris_file(EphemerisFile_Header *ep, int64_t *old_e
         if (*old_epoch == (int64_t)eprec->start_epoch) {
             /* Real diagnostic about overlapping chunks -- left unconditional
              * so the user knows we silently dropped a record. */
-            printf("\n\n! a clone record foud ! record %d start date %.2f \n\n",eprec->record_number, eprec->start_epoch);
+            spody_log_printf("\n\n! a clone record foud ! record %d start date %.2f \n\n",eprec->record_number, eprec->start_epoch);
             continue;
         }
         *old_epoch = (int64_t)eprec->start_epoch;
@@ -273,8 +276,8 @@ static int create_binary_ephemeris_file(EphemerisFile_Header *ep, int64_t *old_e
      * -1) so the caller can tell a lost write from a missing chunk. */
     int write_failed = ferror(fp_bin);
     if (fclose(fp_bin) != 0 || write_failed) {
-        fprintf(stderr, "ephemeris: write failed on '%s': %s\n",
-                bin_filename, strerror(errno));
+        spody_log_eprintf("ephemeris: write failed on '%s': %s\n",
+                  bin_filename, strerror(errno));
         return -2;
     }
     return 0;
@@ -416,7 +419,7 @@ static int calculate_body_posvel(MappedEphemeris *map, int target_idx, double et
     // floating point error check
     if (set_id >= n_sets) {
         set_id = n_sets - 1;
-        printf("Adjusted Set ID due to floating point error: %d\n", set_id);
+        spody_log_printf("Adjusted Set ID due to floating point error: %d\n", set_id);
     }
 
     // 3. Tau evaluation
@@ -479,9 +482,9 @@ static int ephemeris_map_file(MappedEphemerisData *med, const char *filename) {
      * field is trusted: a file shorter than the header would be read
      * past its end and underflow the payload size below. */
     if (med->mf.size < sizeof(EphemerisFile_Header)) {
-        fprintf(stderr, "ephemeris: '%s' is too small (%zu bytes) for the "
-                "%zu-byte header; the file is damaged, regenerate it\n",
-                filename, med->mf.size, sizeof(EphemerisFile_Header));
+        spody_log_eprintf("ephemeris: '%s' is too small (%zu bytes) for the "
+                  "%zu-byte header; the file is damaged, regenerate it\n",
+                  filename, med->mf.size, sizeof(EphemerisFile_Header));
         mf_unmap_file(&med->mf);
         return -12;
     }
@@ -501,17 +504,17 @@ static int ephemeris_map_file(MappedEphemerisData *med, const char *filename) {
 
     /* Validate the on-disk format: magic SPDEET + supported version. */
     if (memcmp(med->header->magic, SPODY_EPH_MAGIC_ET, SPODY_EPH_MAGIC_LEN) != 0) {
-        printf("ephemeris_map_file: bad magic (got '%.8s', expected '%.8s'). "
-               "Regenerate the .spody binary with the current spody_createfile_*.\n",
-               med->header->magic, SPODY_EPH_MAGIC_ET);
+        spody_log_eprintf("ephemeris_map_file: bad magic (got '%.8s', expected '%.8s'). "
+                          "Regenerate the .spody binary with the current spody_createfile_*.\n",
+                          med->header->magic, SPODY_EPH_MAGIC_ET);
         free(med->header); med->header = NULL;
         mf_unmap_file(&med->mf);
         return -10;
     }
     if (med->header->format_version != SPODY_EPH_FORMAT_VERSION) {
-        printf("ephemeris_map_file: unsupported format_version %u (expected %u)\n",
-               (unsigned)med->header->format_version,
-               (unsigned)SPODY_EPH_FORMAT_VERSION);
+        spody_log_eprintf("ephemeris_map_file: unsupported format_version %u (expected %u)\n",
+                          (unsigned)med->header->format_version,
+                          (unsigned)SPODY_EPH_FORMAT_VERSION);
         free(med->header); med->header = NULL;
         mf_unmap_file(&med->mf);
         return -11;
@@ -541,20 +544,20 @@ static int ephemeris_map_file(MappedEphemerisData *med, const char *filename) {
     }
     if (n_coeff <= 0 || med->header->bytes_per_record != expected_bpr || bad_slot != -1) {
         if (bad_slot >= 0)
-            fprintf(stderr, "ephemeris: '%s' has an inconsistent header "
-                    "(body slot %d does not fit in the %d coefficients of a "
-                    "record); the file is damaged, regenerate it\n",
-                    filename, bad_slot, n_coeff);
+            spody_log_eprintf("ephemeris: '%s' has an inconsistent header "
+                      "(body slot %d does not fit in the %d coefficients of a "
+                      "record); the file is damaged, regenerate it\n",
+                      filename, bad_slot, n_coeff);
         else if (bad_slot == -2)
-            fprintf(stderr, "ephemeris: '%s' has an inconsistent header "
-                    "(seconds_per_record=%d); the file is damaged, "
-                    "regenerate it\n", filename,
-                    med->header->seconds_per_record);
+            spody_log_eprintf("ephemeris: '%s' has an inconsistent header "
+                      "(seconds_per_record=%d); the file is damaged, "
+                      "regenerate it\n", filename,
+                      med->header->seconds_per_record);
         else
-            fprintf(stderr, "ephemeris: '%s' has an inconsistent header "
-                    "(bytes_per_record=%d, %d coefficients -> %lld expected); "
-                    "the file is damaged, regenerate it\n", filename,
-                    med->header->bytes_per_record, n_coeff, expected_bpr);
+            spody_log_eprintf("ephemeris: '%s' has an inconsistent header "
+                      "(bytes_per_record=%d, %d coefficients -> %lld expected); "
+                      "the file is damaged, regenerate it\n", filename,
+                      med->header->bytes_per_record, n_coeff, expected_bpr);
         free(med->header); med->header = NULL;
         mf_unmap_file(&med->mf);
         return -13;
@@ -567,9 +570,9 @@ static int ephemeris_map_file(MappedEphemerisData *med, const char *filename) {
 
     size_t bpr = (size_t)med->header->bytes_per_record;
     if (remaining_bytes == 0 || remaining_bytes % bpr != 0) {
-        fprintf(stderr, "ephemeris: '%s' payload of %zu bytes is not a "
-                "positive multiple of the %zu-byte record; the file looks "
-                "truncated, regenerate it\n", filename, remaining_bytes, bpr);
+        spody_log_eprintf("ephemeris: '%s' payload of %zu bytes is not a "
+                  "positive multiple of the %zu-byte record; the file looks "
+                  "truncated, regenerate it\n", filename, remaining_bytes, bpr);
         free(med->header); med->header = NULL;
         mf_unmap_file(&med->mf);
         return -14;
@@ -608,11 +611,11 @@ static int ephemeris_map_file(MappedEphemerisData *med, const char *filename) {
         double rec_end   = med->records[med->num_records - 1]->end_epoch;
         if (med->header->start_epoch != rec_start ||
             med->header->end_epoch   != rec_end) {
-            printf("ephemeris: subset file -- header claims %.3f .. %.3f ET "
-                   "but records cover %.3f .. %.3f ET; using the records' "
-                   "range.\n",
-                   med->header->start_epoch, med->header->end_epoch,
-                   rec_start, rec_end);
+            spody_log_printf("ephemeris: subset file -- header claims %.3f .. %.3f ET "
+                             "but records cover %.3f .. %.3f ET; using the records' "
+                             "range.\n",
+                             med->header->start_epoch, med->header->end_epoch,
+                             rec_start, rec_end);
             med->header->start_epoch = rec_start;
             med->header->end_epoch   = rec_end;
         }
@@ -646,12 +649,12 @@ int spody_createfile_MappedEphemerisData(const char *path, const char **file_nam
     sprintf(bin_filename, "./%s/de%s.spody",path,de); 
 
     FILE *file = fopen(header_path,"r");
-    if (!file) { perror("cannot open header file"); return -1; }
+    if (!file) { spody_log_eprintf("cannot open header file: %s\n", strerror(errno)); return -1; }
 
     /* Truncate the destination on first open: avoids accidental append
      * to a previous run. Subsequent record writes use "ab". */
     FILE *fp_bin = fopen(bin_filename, "wb");
-    if (!fp_bin) { perror("cannot open bin file"); fclose(file); return -1; }
+    if (!fp_bin) { spody_log_eprintf("cannot open bin file: %s\n", strerror(errno)); fclose(file); return -1; }
 
     EphemerisFile_Header ep = {0};
     returnNumber = read_ephemeris_file_header(file, &ep);
@@ -678,8 +681,8 @@ int spody_createfile_MappedEphemerisData(const char *path, const char **file_nam
     /* first write header info */
     int header_failed = fwrite(&ep, sizeof(EphemerisFile_Header), 1, fp_bin) != 1;
     if (fclose(fp_bin) != 0 || header_failed) {
-        fprintf(stderr, "ephemeris: write failed on '%s': %s\n",
-                bin_filename, strerror(errno));
+        spody_log_eprintf("ephemeris: write failed on '%s': %s\n",
+                  bin_filename, strerror(errno));
         return -2;
     }
 
@@ -702,7 +705,7 @@ int spody_createfile_MappedEphemerisData(const char *path, const char **file_nam
 
         /* One-line progress per file -- kept unconditional so the user
          * (and the GUI's wizard convert window) sees the loop tick. */
-        printf("file %d writed\n",i);
+        spody_log_printf("file %d writed\n",i);
 
     }
 
@@ -739,15 +742,15 @@ int spody_createfile_MappedEphemerisData(const char *path, const char **file_nam
                     hdr.end_epoch   = last_end;
                     if (fseek(fp_fix, 0, SEEK_SET) == 0 &&
                         fwrite(&hdr, sizeof hdr, 1, fp_fix) == 1) {
-                        printf("header epochs refreshed to the converted "
-                               "range (%.3f .. %.3f ET)\n",
-                               first_start, last_end);
+                        spody_log_printf("header epochs refreshed to the converted "
+                                         "range (%.3f .. %.3f ET)\n",
+                                         first_start, last_end);
                     }
                 }
             }
             if (fclose(fp_fix) != 0) {
-                fprintf(stderr, "ephemeris: write failed on '%s': %s\n",
-                        bin_filename, strerror(errno));
+                spody_log_eprintf("ephemeris: write failed on '%s': %s\n",
+                          bin_filename, strerror(errno));
                 return -2;
             }
         }
@@ -914,11 +917,11 @@ int spody_get_ephposition(MappedEphemeris *map, int central_idx, int target_idx,
 
     double central[3];
     if (get_body_position_ssb(map, target_idx, et, result) < 0) {
-        printf("Target body not supported\n");
+        spody_log_eprintf("Target body not supported\n");
         return -1;
     }
     if (get_body_position_ssb(map, central_idx, et, central) < 0) {
-        printf("Central body not supported\n");
+        spody_log_eprintf("Central body not supported\n");
         result[0] = 0.0; result[1] = 0.0; result[2] = 0.0;
         return -1;
     }
@@ -947,11 +950,11 @@ int spody_get_ephstate(MappedEphemeris *map, int central_idx, int target_idx, do
 
     double cpos[3], cvel[3];
     if (get_body_state_ssb(map, target_idx, et, pos, vel) < 0) {
-        printf("Target body not supported\n");
+        spody_log_eprintf("Target body not supported\n");
         return -1;
     }
     if (get_body_state_ssb(map, central_idx, et, cpos, cvel) < 0) {
-        printf("Central body not supported\n");
+        spody_log_eprintf("Central body not supported\n");
         for (int i = 0; i < 6; i++) result[i] = 0.0;
         return -1;
     }
@@ -977,7 +980,7 @@ int spody_get_ephposition_batch(MappedEphemeris *map, int central_idx, const int
     // is handled automatically by the per-body cache in calculate_body_position.
     double central[3];
     if (get_body_position_ssb(map, central_idx, et, central) < 0) {
-        printf("Central body not supported\n");
+        spody_log_eprintf("Central body not supported\n");
         for (int i = 0; i < 3 * n_targets; i++) result[i] = 0.0;
         return -1;
     }
@@ -986,7 +989,7 @@ int spody_get_ephposition_batch(MappedEphemeris *map, int central_idx, const int
         double target_ssb[3];
         double *out = result + 3 * i;
         if (get_body_position_ssb(map, target_idx_array[i], et, target_ssb) < 0) {
-            printf("Target body %d not supported\n", target_idx_array[i]);
+            spody_log_eprintf("Target body %d not supported\n", target_idx_array[i]);
             out[0] = 0.0; out[1] = 0.0; out[2] = 0.0;
             continue;
         }

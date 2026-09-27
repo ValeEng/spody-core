@@ -22,6 +22,7 @@
 #include "spody_eop.h"
 #include "spody_forcemodels.h"
 #include "spody_time.h"
+#include "spody_io.h"
 
 int spody_gp_to_state_icrf(const spody_sgp4_elements *el,
                            const char *eop_file,
@@ -37,14 +38,14 @@ int spody_gp_to_state_icrf(const spody_sgp4_elements *el,
     spody_sgp4_sat sat;
     int rc = spody_sgp4_init(el, &sat);
     if (rc != SPODY_SGP4_OK) {
-        fprintf(stderr, "gp: element set rejected by sgp4, rc=%d\n", rc);
+        spody_log_eprintf("gp: element set rejected by sgp4, rc=%d\n", rc);
         return 1;
     }
 
     double r_teme[3], v_teme[3];
     rc = spody_sgp4_at(&sat, 0.0, r_teme, v_teme);
     if (rc != SPODY_SGP4_OK) {
-        fprintf(stderr, "gp: sgp4 failed at epoch, rc=%d\n", rc);
+        spody_log_eprintf("gp: sgp4 failed at epoch, rc=%d\n", rc);
         return 1;
     }
 
@@ -64,23 +65,23 @@ int spody_gp_to_state_icrf(const spody_sgp4_elements *el,
 
     MappedEOPData eop_data = {0};
     if (spody_setup_MappedEOPData(&eop_data, eop_file) != 0) {
-        fprintf(stderr, "gp: cannot load EOP from '%s'\n", eop_file);
+        spody_log_eprintf("gp: cannot load EOP from '%s'\n", eop_file);
         return 1;
     }
     /* Outside the EOP table the TEME rotation falls back to the
      * identity: refuse instead of returning TEME labelled ICRF. */
     if (!spody_eop_covers_mjd(&eop_data, el->epoch_mjd)) {
-        fprintf(stderr,
-            "gp: epoch UTC MJD %.5f is outside the EOP table '%s' "
-            "(UTC MJD %.2f .. %.2f); update finals2000A.all\n",
-            el->epoch_mjd, eop_file, eop_data.mjd_first,
-            eop_data.mjd_last_predicted);
+        spody_log_eprintf(
+              "gp: epoch UTC MJD %.5f is outside the EOP table '%s' "
+              "(UTC MJD %.2f .. %.2f); update finals2000A.all\n",
+              el->epoch_mjd, eop_file, eop_data.mjd_first,
+              eop_data.mjd_last_predicted);
         spody_free_MappedEOPData(&eop_data);
         return 1;
     }
     MappedIAU2006Data iau_data = {0};
     if (spody_setup_MappedIAU2006Data(&iau_data, iau2006_dir) != 0) {
-        fprintf(stderr, "gp: cannot load IAU 2006 from '%s'\n", iau2006_dir);
+        spody_log_eprintf("gp: cannot load IAU 2006 from '%s'\n", iau2006_dir);
         spody_free_MappedEOPData(&eop_data);
         return 1;
     }
