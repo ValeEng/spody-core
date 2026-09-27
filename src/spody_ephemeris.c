@@ -667,8 +667,7 @@ static int ephemeris_unmap_file(MappedEphemerisData *med) {
     if (!med) return -1;
 
     free(med->records); med->records = NULL;
-    /* The header is always a private heap copy (see ephemeris_map_file
-     * and spody_setup_partialMappedEphemerisData). */
+    /* The header is always a private heap copy (see ephemeris_map_file). */
     free(med->header); med->header = NULL;
     med->num_records = 0;
 
@@ -838,9 +837,8 @@ int spody_createfile_MappedEphemerisData(const char *path, const char **file_nam
 }
 
 int spody_setup_MappedEphemerisData(MappedEphemerisData *med, const char *filename){
-    /* Subset-coverage reconciliation happens inside ephemeris_map_file
-     * (on the private header copy) so the partial loader gets healed
-     * epochs too. */
+    /* Subset-coverage reconciliation happens inside ephemeris_map_file,
+     * on the private header copy. */
     return ephemeris_map_file(med, filename);
 }
 
@@ -1117,91 +1115,3 @@ void spody_getrotmatrix_moonpa2icrf(double phi, double theta, double psi, double
             R[i][j] = Cfwd[j][i];
 }
 
-
-//-----Numeric error safer function ---------------------------------------------------------------
-
-/*------only JD without the subtraction of in_start
-
-int spody_setup_partialMappedEphemeris(MappedEphemeris *map, const char *filename, double in_start, double in_end){
-
-    //TBD necessary a free function but now we end the program for memory free
-
-    MappedEphemeris full = {0};
-    if (ephemeris_map_file(&full, filename) != 0) return -1;
-
-    int record_id_start = (int)floor((in_start - full.header->start_epoch)/full.header->days_per_record);
-    int record_id_end = (int)floor((in_end - full.header->start_epoch)/full.header->days_per_record);
-    int number_of_records = (record_id_end - record_id_start) + 1; // is alway + 1 wrt the difference 
-    if (number_of_records <= 0) return -4;
-
-    printf("record_id_start : %d | record_id_end : %d \nnumber_of_reccords : %d\n", record_id_start, record_id_end, number_of_records);
-
-    map->header = malloc(sizeof(EphemerisFile_Header));
-    *map->header = *full.header;
-
-    map->records = (EphemerisFile_Record**)malloc(sizeof(EphemerisFile_Record*) * number_of_records); // * map->header->bytes_per_record
-    if (!map->records) return -3; //malloc error
-
-    for(int i = 0; i < number_of_records; i++ ) {
-        //map->records[i] = full.records[ i + record_id_start ];
-        size_t sz = map->header->bytes_per_record;
-        map->records[i] = malloc(sz);
-        memcpy(map->records[i], full.records[record_id_start + i], sz);
-        printf("%zu bytes copied",sz);
-    }
-    
-    map->num_records = number_of_records;
-    map->header->start_epoch = map->records[0]->start_epoch;
-    map->header->end_epoch = map->records[ map->num_records - 1 ]->end_epoch;
-
-    printf("map->num_records : %zu \nmap->header->start_epoch : %f | map->records[0]->start_epoch : %f \nmap->header->end_epoch : %f | map->records[map->num_records - 1]->end_epoch : %f\n", map->num_records, map->header->start_epoch, map->records[0]->start_epoch, map->header->end_epoch, map->records[map->num_records - 1]->end_epoch);
-    printf("size of entire allocatedd memory for the map : %zu \n", sizeof(MappedEphemeris) + sizeof(EphemerisFile_Header) + sizeof(EphemerisFile_Record*) * number_of_records + number_of_records * map->header->bytes_per_record);
-    printf("size of map only : %zu\n", sizeof(MappedEphemeris));
-    printf("size of header : %zu\n", sizeof(EphemerisFile_Header));
-    printf("size of records pointers array : %zu\n", sizeof(EphemerisFile_Record*) * number_of_records);
-    printf("size of all records stored : %d\n", number_of_records * map->header->bytes_per_record);
-    ephemeris_unmap_file(&full);
-
-
-    return 0;
-}
-*/
-
-int spody_setup_partialMappedEphemerisData(MappedEphemerisData *med, const char *filename, double in_start_et, double in_end_et){
-
-    /* Loads the same .spody file as spody_setup_MappedEphemerisData but
-     * keeps in memory only the records covering [in_start_et, in_end_et]
-     * (in ET seconds past J2000). Useful for missions of bounded duration
-     * on memory-constrained targets. */
-
-    MappedEphemerisData full = {0};
-    if (ephemeris_map_file(&full, filename) != 0) return -1;
-
-    int record_id_start = (int)floor((in_start_et - full.header->start_epoch) / (double)full.header->seconds_per_record);
-    int record_id_end   = (int)floor((in_end_et   - full.header->start_epoch) / (double)full.header->seconds_per_record);
-    int n = (record_id_end - record_id_start) + 1;
-    if (n <= 0) { ephemeris_unmap_file(&full); return -4; }
-
-    /* private copy of header + records (the full mmap will be unmapped) */
-    med->header = malloc(sizeof(EphemerisFile_Header));
-    if (!med->header) { ephemeris_unmap_file(&full); return -3; }
-    *med->header = *full.header;
-
-    med->records = (EphemerisFile_Record**)malloc(sizeof(EphemerisFile_Record*) * n);
-    if (!med->records) { ephemeris_unmap_file(&full); return -3; }
-
-    for (int i = 0; i < n; i++) {
-        size_t sz = med->header->bytes_per_record;
-        med->records[i] = malloc(sz);
-        if (!med->records[i]) { ephemeris_unmap_file(&full); return -3; }
-        memcpy(med->records[i], full.records[record_id_start + i], sz);
-    }
-    med->num_records = (size_t)n;
-
-    /* refresh header epochs to the actual subset range (still in ET) */
-    med->header->start_epoch = med->records[0]->start_epoch;
-    med->header->end_epoch   = med->records[n - 1]->end_epoch;
-
-    ephemeris_unmap_file(&full);
-    return 0;
-}

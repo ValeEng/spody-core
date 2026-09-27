@@ -99,8 +99,7 @@ typedef struct {
 /* Shared, read-only ephemeris data. The header is always a private heap
  * copy (its coverage epochs are reconciled against the records for subset
  * files -- the mapping itself is read-only); records point into the
- * memory-mapped file (or, for the partial setup, into private heap
- * copies). Neither is mutated by query calls, so a single
+ * memory-mapped file. Neither is mutated by query calls, so a single
  * MappedEphemerisData can be safely shared across threads.
  *
  * Time scale: epochs in the file are already in ET (Ephemeris Time, seconds
@@ -136,7 +135,6 @@ typedef struct {
 
 int spody_createfile_MappedEphemerisData(const char *path, const char **file_names, const int n_files, const char *de);
 int spody_setup_MappedEphemerisData(MappedEphemerisData *med, const char *filename);
-int spody_setup_partialMappedEphemerisData(MappedEphemerisData *med, const char *filename, double in_start, double in_end);
 int spody_setup_MappedEphemeris(MappedEphemeris *map, const MappedEphemerisData *med);
 int spody_free_MappedEphemeris(MappedEphemeris *map);
 int spody_free_MappedEphemerisData(MappedEphemerisData *med);
