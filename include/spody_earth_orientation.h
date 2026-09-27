@@ -216,8 +216,13 @@ int spody_iau2006_xys_interp(MappedIAU2006 *map, double t_tt_cy,
  *
  * where Tu = JD(UT1) - 2451545.0 (days, fractional).
  *
+ * The UT1 date is split in two parts, JD = jd1 + jd2, as in SOFA:
+ * pass (JD_MJD_EPOCH, MJD_UT1) or (JD_J2000, days past J2000). A whole
+ * JD in one double resolves only 40 us of UT1, a staircase of up to
+ * 3e-9 rad in the angle (7 cm at GNSS radius).
+ *
  * Returns ERA in radians, reduced to [0, 2*pi). */
-double spody_iau2006_era(double jd_ut1);
+double spody_iau2006_era(double jd1_ut1, double jd2_ut1);
 
 /* Greenwich Mean Sidereal Time, IAU 1982 (Astronomical Almanac):
  *
@@ -225,7 +230,7 @@ double spody_iau2006_era(double jd_ut1);
  *           + 0.093104 * T^2 - 6.2e-6 * T^3
  *
  * with T = (JD(UT1) - JD_J2000) / 36525 and 240 seconds of time to the
- * degree. Same physical angle as spody_iau2006_era, measured from the
+ * degree; the date in two parts, as spody_iau2006_era. Same physical angle as spody_iau2006_era, measured from the
  * equinox instead of the CIO.
  *
  * The caller decides what "UT1" means, and the two callers here mean
@@ -237,7 +242,7 @@ double spody_iau2006_era(double jd_ut1);
  * inconsistency to tidy away.
  *
  * Returns GMST in radians, reduced to [0, 2*pi). */
-double spody_gmst1982(double jd_ut1);
+double spody_gmst1982(double jd1_ut1, double jd2_ut1);
 
 /* Build the polar-motion matrix W(t):
  *

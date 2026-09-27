@@ -484,10 +484,15 @@ int spody_iau2006_xys(const MappedIAU2006 *map, double t_tt_cy,
  * IERS TN 36 eq. (5.15), Capitaine et al. 2000:
  *     ERA(Tu) = 2*pi * (0.7790572732640 + 1.00273781191135448 * Tu)
  * with Tu = JD_UT1 - JD_J2000 days.
+ *
+ * The date comes in two parts, as in SOFA: (jd1 - JD_J2000) is exact
+ * for jd1 = JD_MJD_EPOCH or JD_J2000, so Tu keeps the resolution of a
+ * number of order 1e4 days (0.2 us) instead of a whole JD (40 us
+ * steps, up to 3e-9 rad of ERA, 7 cm at GNSS radius).
  * ====================================================================== */
 
-double spody_iau2006_era(double jd_ut1) {
-    double Tu = jd_ut1 - JD_J2000;
+double spody_iau2006_era(double jd1_ut1, double jd2_ut1) {
+    double Tu = (jd1_ut1 - JD_J2000) + jd2_ut1;
     /* Decompose 1.00273781191135448 = 1 + 0.00273781191135448 so the
      * factor of 1 contributes whole days that fold out under * 2pi. */
     double frac = 0.7790572732640 + Tu
@@ -495,8 +500,8 @@ double spody_iau2006_era(double jd_ut1) {
     return _fold_2pi(TWO_PI * frac);
 }
 
-double spody_gmst1982(double jd_ut1) {
-    double t = (jd_ut1 - JD_J2000) / DAYS_PER_JULIAN_CY;
+double spody_gmst1982(double jd1_ut1, double jd2_ut1) {
+    double t = ((jd1_ut1 - JD_J2000) + jd2_ut1) / DAYS_PER_JULIAN_CY;
     double gmst_sec = GMST_C0 + GMST_C1 * t
                     + GMST_C2 * t * t
                     + GMST_C3 * t * t * t;
@@ -628,15 +633,17 @@ static void _build_Q(double X, double Y, double s, double Q[3][3]) {
     _mat33_mul(M, Rs, Q);
 }
 
-/* ET (TDB s past J2000) + dUT1 (s) -> JD_UT1.
+/* ET (TDB s past J2000) + dUT1 (s) -> MJD_UT1, the second part of the
+ * date (JD_MJD_EPOCH, MJD_UT1) that the ERA and GMST take. Kept as an
+ * MJD, never summed into a single JD: a double of order 2.4e6 days
+ * resolves only 40 us of UT1.
  *
  * UTC comes from the full chain in spody_time.c: deltet (TDB -> TT)
  * plus the leap-second step function (exact at any post-1972 epoch,
  * 37 s post-2017). The +/-1.657 ms deltet term matters here: it
  * enters the ERA argument at ~25 uas (~3 m at GPS radius). */
-static double _jd_ut1_from_et(double et, double dut1_sec) {
-    double mjd_utc = spody_et_to_mjd_utc(et);
-    return (mjd_utc + JD_MJD_EPOCH) + dut1_sec / SECONDSxDAY;
+static double mjd_ut1_from_et(double et, double dut1_sec) {
+    return spody_et_to_mjd_utc(et) + dut1_sec / SECONDSxDAY;
 }
 
 /* Node spacing expressed in the units spody_iau2006_xys takes. */
@@ -738,8 +745,8 @@ void spody_bf_rotation_earth(const ForceModelContext *ctx, double et,
     double Q[3][3];
     _build_Q(X, Y, s, Q);
 
-    double jd_ut1 = _jd_ut1_from_et(et, dut1_sec);
-    double era = spody_iau2006_era(jd_ut1);
+    double mjd_ut1 = mjd_ut1_from_et(et, dut1_sec);
+    double era = spody_iau2006_era(JD_MJD_EPOCH, mjd_ut1);
     double R3_plus_era[3][3];
     _R3(era, R3_plus_era);
 
@@ -798,9 +805,10 @@ void spody_teme2icrf_rotation(const ForceModelContext *ctx, double et,
      * than waved away because measuring against astropy costs the same
      * either way and this took the residual about the pole axis from
      * 9.1 to 2.7 uas rms. */
-    double jd_ut1 = _jd_ut1_from_et(et, dut1_sec);
-    double sp     = TIO_LOCATOR_UAS_PER_CY * t_tt_cy * UAS2RAD;
-    double eo     = spody_gmst1982(jd_ut1) - spody_iau2006_era(jd_ut1) - sp;
+    double mjd_ut1 = mjd_ut1_from_et(et, dut1_sec);
+    double sp      = TIO_LOCATOR_UAS_PER_CY * t_tt_cy * UAS2RAD;
+    double eo      = spody_gmst1982(JD_MJD_EPOCH, mjd_ut1)
+                   - spody_iau2006_era(JD_MJD_EPOCH, mjd_ut1) - sp;
 
     double R3_eo[3][3];
     _R3(eo, R3_eo);

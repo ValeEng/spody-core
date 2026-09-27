@@ -81,7 +81,9 @@ static void dpinit(spody_sgp4_sat *sat)
      * angle cancels between xlamo and temp everywhere except inside
      * sin(xli - fasx2), where it sets the phase of the resonance
      * forcing and the integrator multiplies it. */
-    dp->thgr = spody_gmst1982(el->epoch_mjd + JD_MJD_EPOCH);
+    /* One-double JD on purpose, (JD, 0): the reference forms the
+     * epoch JD in one double too, and the vectors are its output. */
+    dp->thgr = spody_gmst1982(el->epoch_mjd + JD_MJD_EPOCH, 0.0);
 
 
     dp->xnq    = sat->n0dp;
