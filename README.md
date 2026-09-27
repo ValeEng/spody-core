@@ -58,7 +58,7 @@ single dataset can drive many concurrent propagations without contention.
 | `mission` | **Deprecated**, to be removed: top-level orchestration that ties a spacecraft, force model, integrator, and output stream into a single simulation. The SpOdy app does not use it. |
 | `io` | Buffered file I/O helpers for trajectory and diagnostic dumps, and the text log mirror (`spody_log_printf` / `spody_log_eprintf` / `spody_log_open_mirror`): every diagnosis the library prints goes through it, so it lands in the host's log file too. |
 | `math` | Shared math utilities (rotation matrices, vector ops). |
-| `mapping` | Cross-platform memory-mapped file I/O (used by `ephemeris`, `eop`, `atmosphere`). |
+| `mapping` | Cross-platform memory-mapped file I/O (used by the `ephemeris` loader; EOP and space weather are read into memory). |
 | `version` | Compile-time macros + runtime accessors for the library version, git hash (with `-dirty` flag), and build timestamp. |
 
 ---

@@ -46,8 +46,11 @@ int mf_map_file(MappedFile *mf, const char *filename) {
     }
 
     void *ptr = MapViewOfFile(hMap, FILE_MAP_READ, 0, 0, 0);
+    /* The view keeps the mapping object alive on its own: close the
+     * handle now. Kept open it leaked one handle per mapping and held
+     * the file in use (not deletable or replaceable) after the unmap. */
+    CloseHandle(hMap);
     if (!ptr) {
-        CloseHandle(hMap);
         CloseHandle(hFile);
         return -5;
     }
