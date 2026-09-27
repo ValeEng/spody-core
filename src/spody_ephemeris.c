@@ -475,6 +475,17 @@ static int ephemeris_map_file(MappedEphemerisData *med, const char *filename) {
 
     if (mf_map_file(&med->mf, filename) != 0) return -2; //mapping error
 
+    /* A download or copy cut short must fail here, before any header
+     * field is trusted: a file shorter than the header would be read
+     * past its end and underflow the payload size below. */
+    if (med->mf.size < sizeof(EphemerisFile_Header)) {
+        fprintf(stderr, "ephemeris: '%s' is too small (%zu bytes) for the "
+                "%zu-byte header; the file is damaged, regenerate it\n",
+                filename, med->mf.size, sizeof(EphemerisFile_Header));
+        mf_unmap_file(&med->mf);
+        return -12;
+    }
+
     /* Private heap copy of the header: the file mapping is read-only
      * (PAGE_READONLY / FILE_MAP_READ), and subset files need their
      * coverage epochs reconciled below -- patching the mapped bytes
@@ -506,12 +517,64 @@ static int ephemeris_map_file(MappedEphemerisData *med, const char *filename) {
         return -11;
     }
 
+    /* The converter writes records of exactly the fixed prefix plus
+     * number_coefficients_per_record doubles, and a whole number of
+     * them. Anything else is a damaged file: a zero or short record
+     * size would divide by zero or read coefficients past the record
+     * (past the file, for the last one), and a remainder means the
+     * last record was cut short. Same rules as spopy/ephemeris.py. */
+    int n_coeff = med->header->number_coefficients_per_record;
+    long long expected_bpr = (long long)sizeof(EphemerisFile_Record)
+                           + (long long)n_coeff * (long long)sizeof(double);
+    /* Every body slot in use must fit its 3 components x sets inside the
+     * record's coefficients (get_body_posvel indexes them unchecked),
+     * and the record span must be positive (it divides the epoch). */
+    int bad_slot = (med->header->seconds_per_record > 0) ? -1 : -2;
+    const int n_slots = (int)(sizeof med->header->location / sizeof med->header->location[0]);
+    for (int b = 0; b < n_slots && bad_slot == -1; ++b) {
+        long long nc = med->header->number_coefficients_per_component[b];
+        long long ns = med->header->number_complete_sets_coefficients_per_record[b];
+        long long loc = med->header->location[b];
+        if (nc == 0) continue;   /* unused slot */
+        if (!(nc > 0 && ns > 0 && loc >= 1 && loc - 1 + 3 * nc * ns <= n_coeff))
+            bad_slot = b;
+    }
+    if (n_coeff <= 0 || med->header->bytes_per_record != expected_bpr || bad_slot != -1) {
+        if (bad_slot >= 0)
+            fprintf(stderr, "ephemeris: '%s' has an inconsistent header "
+                    "(body slot %d does not fit in the %d coefficients of a "
+                    "record); the file is damaged, regenerate it\n",
+                    filename, bad_slot, n_coeff);
+        else if (bad_slot == -2)
+            fprintf(stderr, "ephemeris: '%s' has an inconsistent header "
+                    "(seconds_per_record=%d); the file is damaged, "
+                    "regenerate it\n", filename,
+                    med->header->seconds_per_record);
+        else
+            fprintf(stderr, "ephemeris: '%s' has an inconsistent header "
+                    "(bytes_per_record=%d, %d coefficients -> %lld expected); "
+                    "the file is damaged, regenerate it\n", filename,
+                    med->header->bytes_per_record, n_coeff, expected_bpr);
+        free(med->header); med->header = NULL;
+        mf_unmap_file(&med->mf);
+        return -13;
+    }
+
     size_t remaining_bytes = med->mf.size - sizeof(EphemerisFile_Header);
     #if DEBUG_EPHEMERIS == 1
     printf("remaning bytes : %zu \n",remaining_bytes);
     #endif
 
-    med->num_records = remaining_bytes / med->header->bytes_per_record; //we hope it is exact division
+    size_t bpr = (size_t)med->header->bytes_per_record;
+    if (remaining_bytes == 0 || remaining_bytes % bpr != 0) {
+        fprintf(stderr, "ephemeris: '%s' payload of %zu bytes is not a "
+                "positive multiple of the %zu-byte record; the file looks "
+                "truncated, regenerate it\n", filename, remaining_bytes, bpr);
+        free(med->header); med->header = NULL;
+        mf_unmap_file(&med->mf);
+        return -14;
+    }
+    med->num_records = remaining_bytes / bpr;
 
     #if DEBUG_EPHEMERIS == 1
     printf("bytes per record: %d\n", med->header->bytes_per_record);
