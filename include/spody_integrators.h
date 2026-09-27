@@ -239,8 +239,11 @@ int spody_propagate_untilend(IntegratorAllData *integ, double t_end);
  *   Cubic Hermite C^1 using the FSAL endpoint derivatives k_1 and k_7
  *   (which already sit in integ->k pre-multiplied by h_old). This is
  *   integrator-consistent for the 7S Butcher tableau we run, so a
- *   downstream root-finder (e.g. spody_event_check_refined) sees a
- *   curve that actually corresponds to the integrated trajectory.
+ *   downstream root-finder sees a curve that actually corresponds to
+ *   the integrated trajectory. For (r, v) states -- the event
+ *   localisation and the fixed output grid -- spody_dense_state_rv6
+ *   below is the one to use: quintic, it keeps the velocity at the
+ *   integrator's accuracy.
  *   See the file-level comment in spody_integrators.c for why we use
  *   Hermite here instead of the classical DOPRI5 P-matrix.
  *
@@ -254,6 +257,24 @@ int spody_propagate_untilend(IntegratorAllData *integ, double t_end);
  *
  * `theta` is clamped to [0, 1] internally. */
 int spody_dense_eval(const IntegratorAllData *integ, double theta, double *y_out);
+
+/* Dense output for a second-order system in (r, v) layout -- dim 6,
+ * y = [r(3), v(3)], f = (v, a) -- at time t inside the last accepted
+ * step (clamped to [t_old, t]).
+ *
+ * Quintic Hermite (spody_hermite_quintic_rv6) on r, v and the
+ * accelerations at both ends of the step. Those accelerations cost
+ * nothing: they are the FSAL derivatives the step already holds,
+ * unscaled by h -- after the step f(t_old, y_old) and f(t, y) --, so
+ * no RHS evaluation is added and no k/h division rounds them. Position
+ * and velocity keep the integrator's own accuracy, where the cubic of
+ * spody_dense_eval loses an order on the velocity.
+ *
+ * Valid right after spody_propagate_onestep returns SPODY_INTEG_OK and
+ * until the next step or state reset. RK45 only; returns
+ * SPODY_INTEG_ERR_NULL otherwise. */
+int spody_dense_state_rv6(const IntegratorAllData *integ, double t,
+                          double y_out[6]);
 
 #ifdef __cplusplus
 }

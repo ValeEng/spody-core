@@ -43,7 +43,7 @@ extern "C" {
  *   LLO with rel_tol = 1e-9). Recurring kinds (eclipse, altitude
  *   crossing) refine the crossing inside the accepted step via Brent
  *   root-finding on the RK45 dense output (spody_event_check_refined,
- *   sub-microsecond localization); per-event opt-out via the
+ *   localisation at the integrator's accuracy); per-event opt-out via the
  *   `refined` flag falls back to step-boundary precision.
  *
  * Threading:
@@ -173,8 +173,9 @@ typedef struct {
                                        surface (km); irrelevant to other kinds    */
 
     /* Per-event refinement opt-out. 1 (default) = Brent + dense output
-     * to localise the trigger inside the accepted step (precision
-     * sub-microsecond on a 30 s LRO step). 0 = trigger at the end of
+     * to localise the trigger inside the accepted step (precision of
+     * the integrator itself: 8 us at rel_tol 1e-9 on a lunar impact,
+     * 0.03 us at 1e-11). 0 = trigger at the end of
      * the step where the predicate first holds (precision = step
      * size). The Brent path is essentially free except at the actual
      * crossing step, so the toggle exists for users who have hundreds
@@ -282,14 +283,17 @@ int spody_event_check(SpodyEvent *ev,
 /* "Refined" version: detects a sign change of the predicate between two
  * accepted steps and uses dense output + Brent root-finding to localise
  * the trigger inside the last step. Precision is at the level of the
- * dense interpolant (cubic Hermite C^1; sub-microsecond on a 30 s LRO
- * step). Same return semantics as the coarse version above.
+ * dense interpolant, spody_dense_state_rv6 -- quintic, so the
+ * integrator's own: on a lunar impact at rel_tol 1e-9 the trigger time
+ * is within 8 us and the trigger velocity within 0.01 mm/s (the cubic
+ * used before was off by 134 us and 0.2 mm/s). Same return semantics
+ * as the coarse version above.
  *
  * The integrator must be SPODY_INTEG_RK45 (other methods don't yet
- * provide dense_eval and silently fall back to the coarse path).
+ * provide dense output and silently fall back to the coarse path).
  * Pass `integ` as the integrator that just produced (t, y) via
- * spody_propagate_onestep -- the function reads integ->t_old, integ->y_old
- * and the stored RK stages to evaluate the interpolant. */
+ * spody_propagate_onestep -- the function reads its step ends and the
+ * derivatives there to evaluate the interpolant. */
 int spody_event_check_refined(SpodyEvent *ev,
                               const ForceModelContext *ctx,
                               const IntegratorAllData *integ);

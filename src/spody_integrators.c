@@ -18,7 +18,7 @@
 #include <string.h>
 #include <math.h>
 #include "spody_integrators.h"
-#include "spody_interp.h"   /* spody_hermite_cubic_1d for dense output */
+#include "spody_interp.h"   /* Hermite interpolants for dense output */
 #include "spody_io.h"
 
 //----- DP45 well-known constants (hardcoded, do not expose in options) ------
@@ -579,9 +579,11 @@ int spody_propagate_untilend(IntegratorAllData *integ, double t_end) {
  * matches at the endpoints (by construction of any reasonable formula)
  * but drifts off the integrated trajectory mid-step. The bug is
  * harmless for trajectory plotting (errors stay small) but it breaks
- * downstream localisation -- spody_event_check_refined runs Brent on
- * the dense curve, so a non-integrator-consistent interpolant gives a
- * wrong t_trigger.
+ * downstream localisation -- event checks run Brent on the dense
+ * curve, so a non-integrator-consistent interpolant gives a wrong
+ * t_trigger. (They now use spody_dense_state_rv6, the quintic on the
+ * same endpoint data plus the accelerations; the reasoning holds for
+ * both.)
  *
  * Cubic Hermite sidesteps the issue entirely: it depends only on the
  * endpoint values and the endpoint derivatives, both of which are
@@ -627,5 +629,27 @@ int spody_dense_eval(const IntegratorAllData *integ, double theta, double *y_out
                         integ->y_old[i], k1[i] * inv_h,
                         integ->y[i],     k7[i] * inv_h);
     }
+    return SPODY_INTEG_OK;
+}
+
+int spody_dense_state_rv6(const IntegratorAllData *integ, double t,
+                          double y_out[6]) {
+    if (!integ || !y_out) return SPODY_INTEG_ERR_NULL;
+    if (integ->method != SPODY_INTEG_RK45 || integ->dim != 6)
+        return SPODY_INTEG_ERR_NULL;
+    if (!integ->y_old || !integ->y || !integ->f_now || !integ->f_new)
+        return SPODY_INTEG_ERR_NULL;
+
+    /* The accepted step swapped the FSAL buffers: f_now now holds
+     * f(t, y) at the END of the step and f_new f(t_old, y_old) at its
+     * START -- the names describe the next step, not this one.
+     * Components 3..5 of f are the accelerations. */
+    const double *f_start = integ->f_new;
+    const double *f_end   = integ->f_now;
+
+    spody_hermite_quintic_rv6(t,
+                              integ->t_old, integ->y_old, f_start + 3,
+                              integ->t,     integ->y,     f_end + 3,
+                              y_out);
     return SPODY_INTEG_OK;
 }

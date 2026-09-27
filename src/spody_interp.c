@@ -114,6 +114,50 @@ void spody_hermite_dense_rv6(double t,
                         y_out,   y_out + 3);
 }
 
+void spody_hermite_quintic_rv6(double t,
+                               double t_a, const double y_a[6],
+                               const double acc_a[3],
+                               double t_b, const double y_b[6],
+                               const double acc_b[3],
+                               double y_out[6]) {
+    /* Quintic Hermite basis on s in [0, 1]:
+     *   Q0 = 1 - 10 s^3 + 15 s^4 - 6 s^5     value at a
+     *   Q1 = s -  6 s^3 +  8 s^4 - 3 s^5     slope at a  (x h)
+     *   Q2 = (s^2 - 3 s^3 + 3 s^4 - s^5)/2   curvature at a (x h^2)
+     *   Q3 = 10 s^3 - 15 s^4 + 6 s^5         value at b
+     *   Q4 = -4 s^3 +  7 s^4 - 3 s^5         slope at b  (x h)
+     *   Q5 = (s^3 - 2 s^4 + s^5)/2           curvature at b (x h^2)
+     * At s = 0 and s = 1 every coefficient is 0 or 1 in floating
+     * point too, so the endpoints come back bit for bit. */
+    double h  = t_b - t_a;
+    double s  = clamp_unit((t - t_a) / h);
+    double s2 = s * s, s3 = s2 * s, s4 = s3 * s, s5 = s4 * s;
+
+    double Q0 =  1.0 - 10.0 * s3 + 15.0 * s4 - 6.0 * s5;
+    double Q1 =    s -  6.0 * s3 +  8.0 * s4 - 3.0 * s5;
+    double Q2 =  0.5 * s2 - 1.5 * s3 + 1.5 * s4 - 0.5 * s5;
+    double Q3 = 10.0 * s3 - 15.0 * s4 + 6.0 * s5;
+    double Q4 = -4.0 * s3 +  7.0 * s4 - 3.0 * s5;
+    double Q5 =  0.5 * s3 -        s4 + 0.5 * s5;
+
+    /* d/ds of the basis; velocity = (1/h) d/ds of position. */
+    double D0 = -30.0 * s2 + 60.0 * s3 - 30.0 * s4;
+    double D1 =  1.0 - 18.0 * s2 + 32.0 * s3 - 15.0 * s4;
+    double D2 =    s -  4.5 * s2 +  6.0 * s3 -  2.5 * s4;
+    double D3 = -D0;
+    double D4 = -12.0 * s2 + 28.0 * s3 - 15.0 * s4;
+    double D5 =   1.5 * s2 -  4.0 * s3 +  2.5 * s4;
+
+    double h2 = h * h;
+    for (int k = 0; k < 3; ++k) {
+        y_out[k]     = Q0 * y_a[k] + Q1 * h * y_a[k + 3] + Q2 * h2 * acc_a[k]
+                     + Q3 * y_b[k] + Q4 * h * y_b[k + 3] + Q5 * h2 * acc_b[k];
+        y_out[k + 3] = (D0 * y_a[k] + D3 * y_b[k]) / h
+                     + D1 * y_a[k + 3] + D4 * y_b[k + 3]
+                     + h * (D2 * acc_a[k] + D5 * acc_b[k]);
+    }
+}
+
 size_t spody_bracket_index(const double *xs, size_t n, double x) {
     if (x <= xs[0]) return 0;
     if (x >= xs[n - 1]) return n - 2;

@@ -219,16 +219,15 @@ typedef struct {
     SpodyEvent              *ev;
     const ForceModelContext *ctx;
     const IntegratorAllData *integ;
-    double y_buf[6];   /* scratch for dense_eval (caller's frame is 6-dim) */
+    double y_buf[6];   /* scratch for the dense state (6-dim r, v) */
 } EventClosure;
 
 static double impact_residual(double theta, void *args) {
     EventClosure *c = (EventClosure*)args;
     /* state at theta on the just-completed step */
-    spody_dense_eval(c->integ, theta, c->y_buf);
-
-    /* time at theta */
+    /* time at theta, and the state there */
     double t_theta = c->integ->t_old + theta * c->integ->h_old;
+    spody_dense_state_rv6(c->integ, t_theta, c->y_buf);
 
     /* distance to the body at that state */
     double d2 = body_distance2(c->ev, c->ctx, t_theta, c->y_buf);
@@ -237,16 +236,16 @@ static double impact_residual(double theta, void *args) {
 
 static double eclipse_residual(double theta, void *args) {
     EventClosure *c = (EventClosure*)args;
-    spody_dense_eval(c->integ, theta, c->y_buf);
     double t_theta = c->integ->t_old + theta * c->integ->h_old;
+    spody_dense_state_rv6(c->integ, t_theta, c->y_buf);
     double frac    = eclipse_fraction(c->ev, c->ctx, t_theta, c->y_buf);
     return frac - c->ev->threshold_fraction;
 }
 
 static double alt_crossing_residual(double theta, void *args) {
     EventClosure *c = (EventClosure*)args;
-    spody_dense_eval(c->integ, theta, c->y_buf);
     double t_theta = c->integ->t_old + theta * c->integ->h_old;
+    spody_dense_state_rv6(c->integ, t_theta, c->y_buf);
     double d2 = body_distance2(c->ev, c->ctx, t_theta, c->y_buf);
     return sqrt(d2) - c->ev->radius_km - c->ev->altitude_km;
 }
@@ -283,7 +282,7 @@ int spody_event_check_refined(SpodyEvent *ev,
             if ((f_start > 0.0) == (f_end > 0.0)) break;
 
             /* Bracket Brent on theta in [0, 1] using the closure that
-             * evaluates Hermite + body_distance2 at each probe. */
+             * evaluates the dense state + body_distance2 at each probe. */
             EventClosure cl;
             cl.ev    = ev;
             cl.ctx   = ctx;
@@ -305,10 +304,10 @@ int spody_event_check_refined(SpodyEvent *ev,
 
             /* Explicit evaluation at theta_root: Brent's last probe is
              * not guaranteed to be exactly at the converged root, so
-             * we re-evaluate Hermite here to make sure y_trigger
+             * we re-evaluate the dense state here to make sure y_trigger
              * matches t_trigger. */
-            spody_dense_eval(integ, theta_root, cl.y_buf);
             double t_trigger = integ->t_old + theta_root * integ->h_old;
+            spody_dense_state_rv6(integ, t_trigger, cl.y_buf);
             double d2_trig   = body_distance2(ev, ctx, t_trigger, cl.y_buf);
 
             ev->triggered = 1;
@@ -351,8 +350,8 @@ int spody_event_check_refined(SpodyEvent *ev,
                 theta_root = 1.0;
             }
 
-            spody_dense_eval(integ, theta_root, cl.y_buf);
             double t_trigger = integ->t_old + theta_root * integ->h_old;
+            spody_dense_state_rv6(integ, t_trigger, cl.y_buf);
             double frac_trig = eclipse_fraction(ev, ctx, t_trigger, cl.y_buf);
 
             ev->triggered = 1;
@@ -401,8 +400,8 @@ int spody_event_check_refined(SpodyEvent *ev,
                 if (rc != SPODY_SOLVER_OK) theta_root = 1.0;
             }
 
-            spody_dense_eval(integ, theta_root, cl.y_buf);
             double t_trigger = integ->t_old + theta_root * integ->h_old;
+            spody_dense_state_rv6(integ, t_trigger, cl.y_buf);
             double d2_trig   = body_distance2(ev, ctx, t_trigger, cl.y_buf);
 
             ev->triggered = 1;
