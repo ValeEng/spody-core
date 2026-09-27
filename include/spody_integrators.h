@@ -59,9 +59,7 @@ typedef int (*spody_rhs_fn)(double t, const double *y, double *dy, void *user);
  */
 typedef enum {
     SPODY_INTEG_RK4    = 0,  // classical 4th-order Runge-Kutta, fixed step
-    SPODY_INTEG_RK45   = 1,  // Dormand-Prince 5(4), adaptive step
-    SPODY_INTEG_RK78   = 2,  // Fehlberg 7(8), adaptive step (high order)
-    SPODY_INTEG_VERLET = 3   // velocity-Verlet, fixed step (symplectic, 2nd order)
+    SPODY_INTEG_RK45   = 1   // Dormand-Prince 5(4), adaptive step
 } spody_integrator_method;
 
 /*
@@ -69,8 +67,14 @@ typedef enum {
  *
  *   h_init       : initial step size (s). For fixed-step methods, the step.
  *   h_min, h_max : bounds on the adaptive step size (s). Ignored if fixed.
- *   abs_tol      : absolute tolerance per state component (adaptive only).
- *   rel_tol      : relative tolerance per state component (adaptive only).
+ *   rel_tol      : step tolerance (adaptive only). RKDP45 splits the state
+ *                  into 3-component blocks (position, velocity) and, per
+ *                  block, takes the RSS of the embedded error estimate,
+ *                  divided by the RSS of the step's own change of that
+ *                  block when its square exceeds 0.1 (km^2 or km^2/s^2),
+ *                  absolute otherwise; the step is accepted when the worst
+ *                  block is below rel_tol (GMAT's RSS-step control). There
+ *                  is no separate absolute tolerance.
  *   max_steps    : safety cap on the number of steps per drive call. 0 = unlimited.
  *   safety       : safety factor on adaptive step update (typical 0.8 - 0.9).
  */
@@ -78,7 +82,6 @@ typedef struct {
     double h_init;
     double h_min;
     double h_max;
-    double abs_tol;
     double rel_tol;
     size_t max_steps;
     double safety;
@@ -247,13 +250,11 @@ int spody_propagate_untilend(IntegratorAllData *integ, double t_end);
  *   See the file-level comment in spody_integrators.c for why we use
  *   Hermite here instead of the classical DOPRI5 P-matrix.
  *
- *   Accuracy is 4th-order on the state (one order below the integrator
- *   itself); over a 30 s step at LRO this localises a surface crossing
- *   to well under one microsecond -- below any physically meaningful
- *   threshold for impact / altitude / eclipse events.
+ *   The interpolation error is O(h^4), one order below the integrator
+ *   itself, and on the velocity one order lower still: that is why the
+ *   engine's own grid and events use spody_dense_state_rv6.
  *
- * Other methods (RK4, Verlet, RK78) currently return
- * SPODY_INTEG_ERR_NULL; their dense-output formulas can be added later.
+ * RK4 returns SPODY_INTEG_ERR_NULL (no dense-output formula yet).
  *
  * `theta` is clamped to [0, 1] internally. */
 int spody_dense_eval(const IntegratorAllData *integ, double theta, double *y_out);

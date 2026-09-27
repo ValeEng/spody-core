@@ -117,7 +117,6 @@ void spody_default_integrator_options(spody_integrator_method method, Integrator
     opt->h_init    = 10.0;
     opt->h_min     = 1e-6;
     opt->h_max     = 600.0;
-    opt->abs_tol   = 1e-9;
     opt->rel_tol   = 1e-9;
     opt->max_steps = 0;     // unlimited
     opt->safety    = 0.9;
@@ -129,13 +128,6 @@ void spody_default_integrator_options(spody_integrator_method method, Integrator
         case SPODY_INTEG_RK45:
             opt->h_init = 10.0;
             opt->rel_tol = 1e-9;
-            break;
-        case SPODY_INTEG_RK78:
-            opt->h_init = 30.0;
-            opt->rel_tol = 1e-12;
-            break;
-        case SPODY_INTEG_VERLET:
-            opt->h_init = 1.0;
             break;
     }
 }
@@ -184,12 +176,6 @@ int spody_setup_integrator(IntegratorAllData *integ,
     switch (method) {
         case SPODY_INTEG_RK4:    n_stages = 4;  needs_yerr = 0; break;
         case SPODY_INTEG_RK45:   n_stages = 7;  needs_yerr = 1; break;
-        case SPODY_INTEG_RK78:   n_stages = 13; needs_yerr = 1; break;
-        case SPODY_INTEG_VERLET:
-            // Verlet expects state laid out as [r(0..dim/2-1), v(dim/2..dim-1)].
-            if ((dim & 1) != 0) goto fail_dim;
-            n_stages = 1; needs_yerr = 0;
-            break;
         default: goto fail;
     }
 
@@ -199,18 +185,13 @@ int spody_setup_integrator(IntegratorAllData *integ,
     }
     /* FSAL derivative buffers: only the DP5(4) 7S tableau has the
      * property (its last stage is the next step's first). RK4 does
-     * not, and neither would a Fehlberg 7(8); a future method that
-     * does opts in here. */
+     * not; a future method that does opts in here. */
     if (method == SPODY_INTEG_RK45) {
         if (alloc_buf(&integ->f_now, (size_t)dim)) goto fail;
         if (alloc_buf(&integ->f_new, (size_t)dim)) goto fail;
     }
 
     return SPODY_INTEG_OK;
-
-fail_dim:
-    spody_free_integrator(integ);
-    return SPODY_INTEG_ERR_DIM;
 
 fail:
     spody_free_integrator(integ);
@@ -521,12 +502,6 @@ static int step_rk4(IntegratorAllData *integ) {
     return SPODY_INTEG_OK;
 }
 
-//----- other methods (placeholders) -------------------------------------
-// To be implemented following the same style of step_rkdp45 / step_rk4.
-
-static int step_rk78(IntegratorAllData *integ)   { (void)integ; return SPODY_INTEG_ERR_NULL; }
-static int step_verlet(IntegratorAllData *integ) { (void)integ; return SPODY_INTEG_ERR_NULL; }
-
 //----- public step / drive ----------------------------------------------
 
 int spody_propagate_onestep(IntegratorAllData *integ) {
@@ -534,8 +509,6 @@ int spody_propagate_onestep(IntegratorAllData *integ) {
     switch (integ->method) {
         case SPODY_INTEG_RK4:    return step_rk4(integ);
         case SPODY_INTEG_RK45:   return step_rkdp45(integ);
-        case SPODY_INTEG_RK78:   return step_rk78(integ);
-        case SPODY_INTEG_VERLET: return step_verlet(integ);
     }
     return SPODY_INTEG_ERR_NULL;
 }
