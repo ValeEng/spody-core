@@ -653,13 +653,32 @@ int spody_iau2006_xys_interp(MappedIAU2006 *map, double t_tt_cy,
     long i = (long)floor(t_tt_cy / XYS_NODE_CY);
     long base = i - 1;
 
+    /* When the stencil slides by fewer than SPODY_XYS_STENCIL nodes
+     * (the next or previous hour, either direction of propagation),
+     * the nodes it keeps are reused and only the new ones cost a
+     * series evaluation. Every node is still evaluated at its own
+     * grid instant, so the values are the same bit for bit as a full
+     * recompute -- only the count of evaluations changes. */
     if (!map->cache_valid || map->cache_base != base) {
+        double nx[SPODY_XYS_STENCIL], ny[SPODY_XYS_STENCIL];
+        double ns[SPODY_XYS_STENCIL];
         for (int k = 0; k < SPODY_XYS_STENCIL; ++k) {
+            long src = base + k - map->cache_base;
+            if (map->cache_valid && src >= 0 && src < SPODY_XYS_STENCIL) {
+                nx[k] = map->node_x[src];
+                ny[k] = map->node_y[src];
+                ns[k] = map->node_s[src];
+                continue;
+            }
             double t_k = (double)(base + k) * XYS_NODE_CY;
-            if (spody_iau2006_xys(map, t_k, &map->node_x[k],
-                                  &map->node_y[k], &map->node_s[k]) != 0) {
+            if (spody_iau2006_xys(map, t_k, &nx[k], &ny[k], &ns[k]) != 0) {
                 return -1;
             }
+        }
+        for (int k = 0; k < SPODY_XYS_STENCIL; ++k) {
+            map->node_x[k] = nx[k];
+            map->node_y[k] = ny[k];
+            map->node_s[k] = ns[k];
         }
         map->cache_base  = base;
         map->cache_valid = 1;

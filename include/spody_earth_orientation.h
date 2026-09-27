@@ -163,7 +163,12 @@ typedef struct MappedIAU2006 {
      * alone, identical no matter which step sequence the integrator
      * took to reach it. A window that followed the current time would
      * make the force depend on the path, and two runs of the same case
-     * could legitimately differ. */
+     * could legitimately differ.
+     *
+     * When the stencil slides to a neighbouring base, the nodes it
+     * keeps are reused and only the new ones are evaluated: each node
+     * is still computed at its own grid instant, so reuse changes the
+     * cost, never the value. */
     int    cache_valid;
     long   cache_base;          /* grid index of the first stencil node */
     double node_x[SPODY_XYS_STENCIL];
