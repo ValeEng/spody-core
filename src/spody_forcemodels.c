@@ -543,20 +543,20 @@ void spody_force_breakdown(const ForceModelContext *ctx,
         spody_force_drag(ctx, et, r, v, bd->acc_drag);
     }
 
-    /* total: same sum order as rhs_default
-     *   acc_pert = SRP + drag + sum(third) + harmonics
-     *   acc      = acc_pert + 2body
-     */
-    bd->acc_total[0] = bd->acc_srp[0] + bd->acc_drag[0]
-                     + bd->acc_thirdbody_total[0]
-                     + bd->acc_sphericalharmonics[0]
-                     + bd->acc_2body[0];
-    bd->acc_total[1] = bd->acc_srp[1] + bd->acc_drag[1]
-                     + bd->acc_thirdbody_total[1]
-                     + bd->acc_sphericalharmonics[1]
-                     + bd->acc_2body[1];
-    bd->acc_total[2] = bd->acc_srp[2] + bd->acc_drag[2]
-                     + bd->acc_thirdbody_total[2]
-                     + bd->acc_sphericalharmonics[2]
-                     + bd->acc_2body[2];
+    /* total: accumulated exactly as rhs_default does -- a perturbation
+     * sum starting from zero that takes SRP, drag, each third body in
+     * turn and the harmonics, then the two-body term last. Adding the
+     * pre-summed acc_thirdbody_total instead regroups the third bodies
+     * and, with two or more of them next to a non-zero SRP, rounds
+     * differently from the RHS. A disabled force is exactly zero here,
+     * and adding zero leaves the sum unchanged. */
+    for (int k = 0; k < 3; k++) {
+        double acc_pert = 0.0;
+        acc_pert += bd->acc_srp[k];
+        acc_pert += bd->acc_drag[k];
+        for (int i = 0; i < bd->n_third; i++)
+            acc_pert += bd->acc_thirdbody[i][k];
+        acc_pert += bd->acc_sphericalharmonics[k];
+        bd->acc_total[k] = acc_pert + bd->acc_2body[k];
+    }
 }

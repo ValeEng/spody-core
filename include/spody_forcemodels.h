@@ -462,7 +462,7 @@ void spody_inertial_to_cr3bp_synodic(
  *
  * Bit-equivalence: acc_total reproduces the result of rhs_default at
  * the same (t, y), with the same summation order
- * (SRP + drag + third_total + harmonics + 2body).
+ * (SRP, drag, each third body in turn, harmonics, then 2body).
  *
  * The whole struct is written as one record into the breakdown binary
  * log -- including n_third and the per-body array. Internal padding
