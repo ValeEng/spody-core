@@ -50,6 +50,12 @@ typedef struct {
     double R_ref;
     double GM;
     int N;
+    /* Kernel used by spody_force_sphericalharmonics: 0 = HPC (default),
+     * 1 = reference (non-HPC), from SPODY_HG_NONHPC. Chosen once in
+     * spody_load_HarmonicGravityData, before any worker thread exists,
+     * so the RHS only reads it (a lazily filled static here was a data
+     * race between the batch threads' first calls). */
+    int use_reference_kernel;
 } HarmonicGravityData;
 
 typedef struct {

@@ -56,24 +56,12 @@ void spody_force_twobody(double mu, const double r[3], double acc[3]) {
  * (e.g. spody_bf_rotation_moon) when it builds the
  * ForceModelContext.
  *
- * Selector for the body-fixed kernel: defaults to the HPC variant. Set the
- * env var SPODY_HG_NONHPC=1 (any non-zero int) to switch the whole process
- * to the reference (non-HPC) kernel for audit / regression comparison.
- * The env is sampled lazily on the first call and cached in a static
- * function pointer, so the per-call cost in the RHS hot loop is one
- * indirect call (same as previous direct call after inlining is disabled).
+ * Kernel for the body-fixed evaluation: the HPC variant by default, the
+ * reference (non-HPC) one when SPODY_HG_NONHPC=1 (any non-zero int) for
+ * audit / regression comparison. The choice is made once, when the field
+ * is loaded (HarmonicGravityData.use_reference_kernel), so the RHS hot
+ * loop only reads a flag shared read-only by every worker thread.
  * ============================================================ */
-typedef void (*spody_hg_kernel_fn)(HarmonicGravity *hg, double pos[3], double acc_out[3]);
-
-static spody_hg_kernel_fn spody_select_hg_kernel(void) {
-    static spody_hg_kernel_fn cached = NULL;
-    if (!cached) {
-        const char *env = getenv("SPODY_HG_NONHPC");
-        cached = (env && atoi(env)) ? spody_get_hgaccbodyfixed
-                                    : spody_get_hgaccbodyfixed_hpc;
-    }
-    return cached;
-}
 
 void spody_bf_rotation_moon(const ForceModelContext *ctx, double et,
                              double R_icrf_to_bf[3][3],
@@ -99,7 +87,10 @@ void spody_force_sphericalharmonics(const ForceModelContext *ctx,
 
     /* harmonic disturbing acc in body-fixed frame */
     double acc_bf[3];
-    spody_select_hg_kernel()(ctx->hg, r_bf, acc_bf);
+    if (ctx->hg->hgd->use_reference_kernel)
+        spody_get_hgaccbodyfixed(ctx->hg, r_bf, acc_bf);
+    else
+        spody_get_hgaccbodyfixed_hpc(ctx->hg, r_bf, acc_bf);
 
     /* back to ICRF */
     acc[0] = R_bf2i[0][0]*acc_bf[0] + R_bf2i[0][1]*acc_bf[1] + R_bf2i[0][2]*acc_bf[2];

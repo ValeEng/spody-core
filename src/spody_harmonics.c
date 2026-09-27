@@ -426,6 +426,11 @@ int spody_load_HarmonicGravityData(HarmonicGravityData *hgd, const char *filenam
 
     fclose(file);
 
+    /* Kernel choice, read once here (single-threaded setup) so the RHS
+     * never touches the environment or a shared static. */
+    const char *nonhpc = getenv("SPODY_HG_NONHPC");
+    hgd->use_reference_kernel = (nonhpc && atoi(nonhpc)) ? 1 : 0;
+
     int file_degree = hgd->N; //to be sure we use the correct degree in all functions
     int size = (file_degree + 2) * (file_degree + 3) / 2;
     hgd->recurr_a = malloc(size * sizeof(double));
