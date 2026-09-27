@@ -147,8 +147,16 @@ static double fds2cd(char *str) {
     return strtod(temp, NULL);
 }
 
-static int read_record_block(FILE *fp, EphemerisFile_Header *ep, EphemerisFile_Record *eprec) {
-   
+/* Read one record block of an ASCII chunk. Returns 1 when a whole record
+ * was read, 0 at a clean end of file (nothing left before a record
+ * header), -1 when the chunk is damaged: an unreadable record header, a
+ * coefficient count that disagrees with header.440, or a file that ends
+ * inside a record. A damaged chunk must stop the conversion -- read as
+ * an end of file it would silently shorten the coverage, and a partial
+ * record would reuse the previous record's coefficients. */
+static int read_record_block(FILE *fp, EphemerisFile_Header *ep, EphemerisFile_Record *eprec,
+                             const char *src) {
+
     char line[BUFFER_SIZE_EPH];
     int n_coeff_expected = 0;
     #if DEBUG_EPHEMERIS == 1
@@ -157,15 +165,20 @@ static int read_record_block(FILE *fp, EphemerisFile_Header *ep, EphemerisFile_R
 
     if (!fgets(line, sizeof(line), fp)) return 0; // it's end of file
     //printf("Reading line: %s\n", line);
-    if (sscanf(line, "%d %d", &eprec->record_number, &eprec->number_coefficients_per_record) != 2) return 0; // Parsing of number of coefficients
+    if (sscanf(line, "%d %d", &eprec->record_number, &eprec->number_coefficients_per_record) != 2) {
+        line[strcspn(line, "\r\n")] = '\0';
+        spody_log_eprintf("ephemeris: '%s': unreadable record header line "
+                          "'%.40s'; the chunk is damaged\n", src, line);
+        return -1;
+    }
     //printf("Reading record %d with %d coefficients\n", eprec->record_number, eprec->number_coefficients_per_record);
     if (eprec->number_coefficients_per_record != ep->number_coefficients_per_record) {
-        /* Real parser error -- left unconditional so the user is told
-         * the on-disk ASCII is inconsistent with its own header. */
-        spody_log_eprintf("Warning: Expected %d coefficients, but found %d in block %d\n", n_coeff_expected, eprec->number_coefficients_per_record, eprec->record_number);
-        spody_log_eprintf("HEADER info diverge from data blocks read.\n");
-        spody_log_eprintf("Check the ephemeris file integrity.\n");
-        return 0;
+        spody_log_eprintf("ephemeris: '%s': record %d has %d coefficients, "
+                          "header.440 says %d; the chunk is damaged\n", src,
+                          eprec->record_number,
+                          eprec->number_coefficients_per_record,
+                          ep->number_coefficients_per_record);
+        return -1;
     }else{
         n_coeff_expected = eprec->number_coefficients_per_record;
         #if DEBUG_EPHEMERIS == 1
@@ -192,7 +205,11 @@ static int read_record_block(FILE *fp, EphemerisFile_Header *ep, EphemerisFile_R
                 token = strtok(NULL, " \t\r\n");
             }
         }else{
-            return -100; //end file
+            spody_log_eprintf("ephemeris: '%s': file ends inside record %d "
+                              "(%d of %d coefficients); the chunk is truncated\n",
+                              src, eprec->record_number, coeff_idx,
+                              n_coeff_expected);
+            return -1;
         }
     }
     #if DEBUG_EPHEMERIS == 1
@@ -212,10 +229,10 @@ static int create_binary_ephemeris_file(EphemerisFile_Header *ep, int64_t *old_e
     printf("in create binary\n");
     #endif
     FILE *fp_ascp = fopen(ascp_filename, "r");
-    if (!fp_ascp) { spody_log_eprintf("cannot open ascp file: %s\n", strerror(errno)); return -1; }
+    if (!fp_ascp) { spody_log_eprintf("ephemeris: cannot open ASCII chunk '%s': %s\n", ascp_filename, strerror(errno)); return -1; }
 
     FILE *fp_bin = fopen(bin_filename, "ab");  // "ab" for append mode
-    if (!fp_bin) { spody_log_eprintf("cannot open bin file: %s\n", strerror(errno)); fclose(fp_ascp); return -1; }
+    if (!fp_bin) { spody_log_eprintf("ephemeris: cannot open '%s': %s\n", bin_filename, strerror(errno)); fclose(fp_ascp); return -1; }
     #if DEBUG_EPHEMERIS == 1
     printf("file loaded\n");
     #endif
@@ -240,8 +257,9 @@ static int create_binary_ephemeris_file(EphemerisFile_Header *ep, int64_t *old_e
     #endif
 
     int block_count = 0;
+    int read_rc;
     // Read each record block and write to binary file
-    while (read_record_block(fp_ascp, ep, eprec)) {
+    while ((read_rc = read_record_block(fp_ascp, ep, eprec, ascp_filename)) == 1) {
         block_count++;
         #if DEBUG_EPHEMERIS == 1
         printf("block %d readed\n",block_count);
@@ -280,7 +298,7 @@ static int create_binary_ephemeris_file(EphemerisFile_Header *ep, int64_t *old_e
                   bin_filename, strerror(errno));
         return -2;
     }
-    return 0;
+    return read_rc < 0 ? -3 : 0;   /* -3: damaged chunk (already reported) */
 }
 
 /**
@@ -600,6 +618,26 @@ static int ephemeris_map_file(MappedEphemerisData *med, const char *filename) {
         ptr += med->header->bytes_per_record;
     }
 
+    /* The record lookup is pure arithmetic, (et - start) / seconds per
+     * record, so the records must follow each other with no gap: a file
+     * converted with a chunk missing would hand out a record from the
+     * wrong century for a date in the gap and index past the array after
+     * it. Every converted DE440 joins records exactly (end == next start). */
+    for (size_t i = 1; i < med->num_records; i++) {
+        if (med->records[i]->start_epoch != med->records[i - 1]->end_epoch) {
+            spody_log_eprintf("ephemeris: '%s' has a gap after record %zu "
+                              "(%.3f -> %.3f ET): a chunk is missing, "
+                              "regenerate it\n", filename, i - 1,
+                              med->records[i - 1]->end_epoch,
+                              med->records[i]->start_epoch);
+            free(med->records); med->records = NULL;
+            free(med->header); med->header = NULL;
+            med->num_records = 0;
+            mf_unmap_file(&med->mf);
+            return -15;
+        }
+    }
+
     /* Subset files (e.g. a partial DE440 conversion covering only the
      * chunks the user downloaded) may carry the full-span epochs the
      * converter read from header.440 before knowing which chunks it
@@ -638,27 +676,39 @@ static int ephemeris_unmap_file(MappedEphemerisData *med) {
 }
 
 int spody_createfile_MappedEphemerisData(const char *path, const char **file_names, const int n_files, const char *de){
-    
-    char header_path[1000]; //TBD 
-    char bin_filename[1000];
+
+    char header_path[1000]; //TBD
+    char final_filename[1000];
+    char bin_filename[sizeof final_filename + 8];   /* final + ".tmp" */
     char ascp_filename[1000];
 
     int returnNumber;
 
-    sprintf(header_path, "./%s/header.%s",path,de); 
-    sprintf(bin_filename, "./%s/de%s.spody",path,de); 
+    sprintf(header_path, "./%s/header.%s",path,de);
+    sprintf(final_filename, "./%s/de%s.spody",path,de);
+    /* Everything is written to a temporary file that replaces the
+     * destination only once the whole conversion succeeded: a failed
+     * conversion (missing or damaged chunk, full disk) leaves the
+     * previous de<NNN>.spody untouched and no partial file behind. */
+    snprintf(bin_filename, sizeof bin_filename, "%s.tmp", final_filename);
 
     FILE *file = fopen(header_path,"r");
-    if (!file) { spody_log_eprintf("cannot open header file: %s\n", strerror(errno)); return -1; }
+    if (!file) { spody_log_eprintf("ephemeris: cannot open '%s': %s\n", header_path, strerror(errno)); return -1; }
 
-    /* Truncate the destination on first open: avoids accidental append
-     * to a previous run. Subsequent record writes use "ab". */
+    /* Truncate the temporary file on first open: avoids appending to a
+     * leftover of an interrupted run. Record writes then use "ab". */
     FILE *fp_bin = fopen(bin_filename, "wb");
-    if (!fp_bin) { spody_log_eprintf("cannot open bin file: %s\n", strerror(errno)); fclose(file); return -1; }
+    if (!fp_bin) { spody_log_eprintf("ephemeris: cannot open '%s': %s\n", bin_filename, strerror(errno)); fclose(file); return -1; }
 
     EphemerisFile_Header ep = {0};
     returnNumber = read_ephemeris_file_header(file, &ep);
     fclose(file);
+    if (returnNumber != 0 || ep.number_coefficients_per_record <= 0) {
+        spody_log_eprintf("ephemeris: cannot parse '%s'\n", header_path);
+        fclose(fp_bin);
+        remove(bin_filename);
+        return -1;
+    }
 
     size_t n = ep.number_coefficients_per_record;
     size_t record_size = sizeof(EphemerisFile_Record) + n * sizeof(double);
@@ -683,6 +733,7 @@ int spody_createfile_MappedEphemerisData(const char *path, const char **file_nam
     if (fclose(fp_bin) != 0 || header_failed) {
         spody_log_eprintf("ephemeris: write failed on '%s': %s\n",
                   bin_filename, strerror(errno));
+        remove(bin_filename);
         return -2;
     }
 
@@ -697,8 +748,17 @@ int spody_createfile_MappedEphemerisData(const char *path, const char **file_nam
 
         sprintf(ascp_filename, "./%s/ascp%s.%s",path,file_names[i],de);
 
+        /* Any chunk that cannot be read whole stops the conversion: the
+         * records must be contiguous, and skipping a chunk would leave a
+         * gap that the record-index arithmetic cannot see. */
         returnNumber = create_binary_ephemeris_file(&ep,&old_epoch,ascp_filename,bin_filename);
-        if (returnNumber == -2) return -2;   /* lost write: output is truncated */
+        if (returnNumber != 0) {
+            spody_log_eprintf("ephemeris: conversion stopped at chunk '%s'; "
+                              "'%s' was not changed\n", ascp_filename,
+                              final_filename);
+            remove(bin_filename);
+            return returnNumber;
+        }
         #if DEBUG_EPHEMERIS == 1
         printf("old epoch : %lld\n",(long long)old_epoch);
         #endif
@@ -714,49 +774,66 @@ int spody_createfile_MappedEphemerisData(const char *path, const char **file_nam
      * subset of the ASCII chunks is converted (e.g. the GUI wizard's
      * modern-era profile), refresh the on-disk epochs from the records
      * actually written so the file is self-consistent. */
-    if (returnNumber == 0) {
-        FILE *fp_fix = fopen(bin_filename, "rb+");
-        if (fp_fix) {
-            EphemerisFile_Header hdr;
-            long file_size = 0;
-            if (fread(&hdr, sizeof hdr, 1, fp_fix) == 1 &&
-                fseek(fp_fix, 0, SEEK_END) == 0 &&
-                (file_size = ftell(fp_fix)) > (long)sizeof hdr &&
-                hdr.bytes_per_record > 0) {
-                long n_rec = (file_size - (long)sizeof hdr)
-                             / hdr.bytes_per_record;
-                long first_off = (long)sizeof hdr
-                    + (long)offsetof(EphemerisFile_Record, start_epoch);
-                long last_off  = (long)sizeof hdr
-                    + (n_rec - 1) * (long)hdr.bytes_per_record
-                    + (long)offsetof(EphemerisFile_Record, end_epoch);
-                double first_start = 0.0, last_end = 0.0;
-                if (n_rec > 0 &&
-                    fseek(fp_fix, first_off, SEEK_SET) == 0 &&
-                    fread(&first_start, sizeof first_start, 1, fp_fix) == 1 &&
-                    fseek(fp_fix, last_off, SEEK_SET) == 0 &&
-                    fread(&last_end, sizeof last_end, 1, fp_fix) == 1 &&
-                    (hdr.start_epoch != first_start ||
-                     hdr.end_epoch   != last_end)) {
-                    hdr.start_epoch = first_start;
-                    hdr.end_epoch   = last_end;
-                    if (fseek(fp_fix, 0, SEEK_SET) == 0 &&
-                        fwrite(&hdr, sizeof hdr, 1, fp_fix) == 1) {
-                        spody_log_printf("header epochs refreshed to the converted "
-                                         "range (%.3f .. %.3f ET)\n",
-                                         first_start, last_end);
-                    }
-                }
-            }
-            if (fclose(fp_fix) != 0) {
-                spody_log_eprintf("ephemeris: write failed on '%s': %s\n",
+    FILE *fp_fix = fopen(bin_filename, "rb+");
+    if (!fp_fix) {
+        spody_log_eprintf("ephemeris: cannot reopen '%s': %s\n",
                           bin_filename, strerror(errno));
-                return -2;
+        remove(bin_filename);
+        return -2;
+    }
+    EphemerisFile_Header hdr;
+    long file_size = 0;
+    if (fread(&hdr, sizeof hdr, 1, fp_fix) == 1 &&
+        fseek(fp_fix, 0, SEEK_END) == 0 &&
+        (file_size = ftell(fp_fix)) > (long)sizeof hdr &&
+        hdr.bytes_per_record > 0) {
+        long n_rec = (file_size - (long)sizeof hdr)
+                     / hdr.bytes_per_record;
+        long first_off = (long)sizeof hdr
+            + (long)offsetof(EphemerisFile_Record, start_epoch);
+        long last_off  = (long)sizeof hdr
+            + (n_rec - 1) * (long)hdr.bytes_per_record
+            + (long)offsetof(EphemerisFile_Record, end_epoch);
+        double first_start = 0.0, last_end = 0.0;
+        if (n_rec > 0 &&
+            fseek(fp_fix, first_off, SEEK_SET) == 0 &&
+            fread(&first_start, sizeof first_start, 1, fp_fix) == 1 &&
+            fseek(fp_fix, last_off, SEEK_SET) == 0 &&
+            fread(&last_end, sizeof last_end, 1, fp_fix) == 1 &&
+            (hdr.start_epoch != first_start ||
+             hdr.end_epoch   != last_end)) {
+            hdr.start_epoch = first_start;
+            hdr.end_epoch   = last_end;
+            if (fseek(fp_fix, 0, SEEK_SET) == 0 &&
+                fwrite(&hdr, sizeof hdr, 1, fp_fix) == 1) {
+                spody_log_printf("header epochs refreshed to the converted "
+                                 "range (%.3f .. %.3f ET)\n",
+                                 first_start, last_end);
             }
         }
     }
+    if (fclose(fp_fix) != 0) {
+        spody_log_eprintf("ephemeris: write failed on '%s': %s\n",
+                  bin_filename, strerror(errno));
+        remove(bin_filename);
+        return -2;
+    }
 
-    return returnNumber;
+    /* Replace the destination in one step (rename() on Windows refuses
+     * an existing target). */
+#ifdef _WIN32
+    int moved = MoveFileExA(bin_filename, final_filename, MOVEFILE_REPLACE_EXISTING) != 0;
+#else
+    int moved = rename(bin_filename, final_filename) == 0;
+#endif
+    if (!moved) {
+        spody_log_eprintf("ephemeris: cannot replace '%s' with the new "
+                          "conversion (left as '%s')\n", final_filename,
+                          bin_filename);
+        return -2;
+    }
+
+    return 0;
 
 }
 
