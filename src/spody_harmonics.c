@@ -62,7 +62,13 @@ static int read_spherical_harmonics_file(FILE *file, HarmonicGravityData *pm, in
     int size = (pm->N + 2) * (pm->N + 3) / 2;
     pm->C = calloc(size, sizeof(double)); // calloc init to 0
     pm->S = calloc(size, sizeof(double));
-    if (!pm->C || !pm->S) {
+    /* One flag per (n, m) up to N: reading stops at the first row past
+     * N (a 1200-degree file is ~720k rows), which is only right if the
+     * file is ordered by degree -- so every coefficient the kernel uses
+     * (2 <= n <= N) must have been seen exactly once, or the file is
+     * refused rather than evaluated with silent zeros. */
+    char *seen = calloc(size, 1);
+    if (!pm->C || !pm->S || !seen) {
         spody_log_eprintf("harmonics: out of memory for degree %d\n", pm->N);
         goto fail;
     }
@@ -97,13 +103,32 @@ static int read_spherical_harmonics_file(FILE *file, HarmonicGravityData *pm, in
         }
 
         int index = (n * (n + 1) / 2) + m; //tringular indexing
+        if (seen[index]) {
+            spody_log_eprintf("harmonics: line %d: coefficient n=%d m=%d "
+                      "given twice\n", line_no, n, m);
+            goto fail;
+        }
+        seen[index] = 1;
         pm->C[index] = strtod(tok_c, NULL);
         pm->S[index] = strtod(tok_s, NULL);
     }
 
+    for (int n = 2; n <= pm->N; ++n) {
+        for (int m = 0; m <= n; ++m) {
+            if (!seen[(n * (n + 1) / 2) + m]) {
+                spody_log_eprintf("harmonics: coefficient n=%d m=%d missing "
+                          "before the first row past degree %d (file not "
+                          "ordered by degree, or truncated)\n",
+                          n, m, pm->N);
+                goto fail;
+            }
+        }
+    }
+    free(seen);
     return 0;
 
 fail:
+    free(seen);
     free(pm->C); pm->C = NULL;
     free(pm->S); pm->S = NULL;
     return -1;
