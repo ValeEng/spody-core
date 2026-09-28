@@ -315,6 +315,7 @@ int spody_convert_oem_to_state_icrf(int n_inputs,
                    n_written, n_inputs, n_inputs == 1 ? "" : "s",
                    et_first, et_last, duration_h,
                    n_skipped, n_skipped == 1 ? "" : "s");
+            spody_log_time_anchor("oem", et_first, et_last, n_written);
         }
     }
     return rc;

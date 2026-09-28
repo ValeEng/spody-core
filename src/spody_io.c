@@ -14,10 +14,13 @@
  * limitations under the License.
  */
 #include <errno.h>
+#include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 #include "spody_io.h"
+#include "spody_time.h"
+#include "spody_const.h"
 
 /* ============================================================
  * Text log mirror (see spody_io.h)
@@ -67,4 +70,38 @@ void spody_log_eprintf(const char *fmt, ...) {
     va_start(ap, fmt);
     tee_vprintf(stderr, fmt, ap);
     va_end(ap);
+}
+
+/* ET -> "YYYY-DDDThh:mm:ss.ffffff" (ISO 8601 ordinal date, UTC), for
+ * reading. Built from seconds past J2000 (resolution ~0.1 us), not
+ * from the UTC MJD (a double of order 6e4 days resolves only ~0.6 us);
+ * the MJD serves only for the leap offset. The ET printed next to it
+ * is the exact value. */
+static void utc_ordinal(double et, char out[32]) {
+    double tt    = et - spody_tdb_minus_tt(et);
+    double utc_s = tt + TT2TAI_SEC - spody_tai_minus_utc(spody_et_to_mjd_utc(et));
+    double s0    = utc_s + 0.5 * SECONDSxDAY;       /* from 2000-01-01 00:00 */
+    double day   = floor(s0 / SECONDSxDAY);
+    double sec   = s0 - day * SECONDSxDAY;
+    int year = 0, doy = 0;
+    spody_mjd_to_doy((JD_J2000 - JD_MJD_EPOCH - 0.5) + day, &year, &doy, NULL);
+    long long us = (long long)floor(sec * 1e6 + 0.5);
+    int hh = (int)(us / 3600000000LL);
+    int mm = (int)((us / 60000000LL) % 60);
+    int ss = (int)((us / 1000000LL) % 60);
+    int ff = (int)(us % 1000000LL);
+    snprintf(out, 32, "%04d-%03dT%02d:%02d:%02d.%06d",
+             year, doy, hh, mm, ss, ff);
+}
+
+void spody_log_time_anchor(const char *who, double et_first,
+                           double et_last, size_t n_records) {
+    char u0[32], u1[32];
+    utc_ordinal(et_first, u0);
+    utc_ordinal(et_last, u1);
+    spody_log_printf("%s: time anchor t0 = ET %.17g s past J2000 TDB "
+                     "[%a] = %s UTC\n", who, et_first, et_first, u0);
+    spody_log_printf("%s: time column t = ET - t0; last record t = %.17g s, "
+                     "ET %.17g [%a] = %s UTC; %zu records\n", who,
+                     et_last - et_first, et_last, et_last, u1, n_records);
 }

@@ -20,6 +20,7 @@
 extern "C" {
 #endif
 
+#include <stddef.h>
 #include <stdio.h>
 
 /* ============================================================
@@ -68,6 +69,15 @@ void spody_log_printf (const char *fmt, ...) SPODY_PRINTF_FMT;
 
 /* printf-style write to stderr (and to the mirror, if open). */
 void spody_log_eprintf(const char *fmt, ...) SPODY_PRINTF_FMT;
+
+/* Time anchor of a binary with a relative time column (SPDYOUT_):
+ * the ET of t = 0 and of the last record, each as %.17g (round-trips
+ * to the same double) and as a hex float (the bits themselves), plus
+ * the UTC reading to the microsecond. A converter calls it once on
+ * success, so its log is enough to recover every absolute epoch as
+ * ET = t0 + t. `who` prefixes the lines ("sp3", "gps", ...). */
+void spody_log_time_anchor(const char *who, double et_first,
+                           double et_last, size_t n_records);
 
 #ifdef __cplusplus
 }

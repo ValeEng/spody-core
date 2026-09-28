@@ -370,6 +370,9 @@ int spody_convert_sp3_to_state_icrf(int n_inputs,
                n_records_all, n_inputs, sat_id,
                et_first_all, et_last_all, duration_h);
     }
+    if (rc == 0 && n_records_all > 0)
+        spody_log_time_anchor("sp3", et_first_all, et_last_all,
+                              n_records_all);
 
     spody_free_MappedIAU2006(&iau_map);
     spody_free_MappedEOP(&eop_map);

@@ -424,6 +424,9 @@ int spody_convert_glonass_to_state_icrf(int n_inputs,
                    n_written_all, n_inputs, sat_id,
                    et_first_all, et_last_all, duration_h, n_total_all);
         }
+        if (n_written_all > 0)
+            spody_log_time_anchor("glonass", et_first_all, et_last_all,
+                                  n_written_all);
     }
 
     spody_free_MappedIAU2006(&iau_map);

@@ -593,6 +593,9 @@ int spody_convert_gps_to_state_icrf(int n_inputs,
                    n_written_all, n_inputs, sat_id,
                    et_first_all, et_last_all, duration_h, n_total_all);
         }
+        if (n_written_all > 0)
+            spody_log_time_anchor("gps", et_first_all, et_last_all,
+                                  n_written_all);
     }
 
     /* Reference _parse_rinex_double here too so the file's first
