@@ -33,18 +33,17 @@ extern "C" {
  *
  * Events are designed to be cheap (a handful of FLOPs + at most one
  * ephemeris query per check) and live OUTSIDE the RHS hot path: they
- * are evaluated by the drive loop (e.g. spody_run_propagate) on the
- * accepted state, never by the integrator's per-stage callback.
+ * are evaluated by the host's drive loop on the accepted state, never
+ * by the integrator's per-stage callback.
  *
  * Localization precision:
- *   One-shot kinds (impact) fire at the first accepted step where
- *   the predicate becomes true; the timestamp is the integrator
- *   timestamp at that step (precision ~ accepted h, of order 30 s on
- *   LLO with rel_tol = 1e-9). Recurring kinds (eclipse, altitude
- *   crossing) refine the crossing inside the accepted step via Brent
- *   root-finding on the RK45 dense output (spody_event_check_refined,
- *   localisation at the integrator's accuracy); per-event opt-out via the
- *   `refined` flag falls back to step-boundary precision.
+ *   spody_event_check_refined localises every kind -- one-shot
+ *   (impact) and recurring (eclipse, altitude crossing) -- inside the
+ *   accepted step by Brent root-finding on the RK45 dense output, at
+ *   the integrator's own accuracy (8 us on a lunar impact at rel_tol
+ *   1e-9). spody_event_check, and the per-event opt-out via the
+ *   `refined` flag, fire at the end of the accepted step instead
+ *   (step-size precision, of order 30 s on LLO).
  *
  * Threading:
  *   SpodyEvent is small and copyable. The caller owns the array of
