@@ -35,10 +35,14 @@
  *     frame for the rotation. The header line marks the realisation
  *     for the reader's information; we do not transform between
  *     realisations.
- *   - SP3 epochs are in GPS time. GPS time runs TAI - 19 s exactly
- *     (no leap seconds since the GPS epoch 1980-01-06), so TT = GPS +
- *     51.184 s; TT -> ET_TDB adds the deltet periodic term
- *     (spody_tdb_minus_tt, +/-1.657 ms).
+ *   - SP3 epochs are in the time system the header declares (first
+ *     "%c" line, columns 10-12). IGS/MGEX files are GPS time (TT = GPS
+ *     + 51.184 s); GAL, QZS and IRN share it; BDT runs 14 s behind;
+ *     ILRS orbits (LAGEOS, ETALON) are UTC and need the leap offset;
+ *     GLO is UTC + 3 h; TAI is TT - 32.184 s. SP3-a/-b have no such
+ *     field and are GPS time. Any other value refuses the file. TT ->
+ *     ET_TDB adds the deltet periodic term (spody_tdb_minus_tt,
+ *     +/-1.657 ms). Epochs never pass through a whole JD.
  *   - The output is a SpOdy SPDYOUT_ binary with state_dim=6: we keep
  *     the standard layout (t, x, y, z, vx, vy, vz) so the existing
  *     reader works without changes, but write vx=vy=vz=0 since SP3

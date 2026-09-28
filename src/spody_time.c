@@ -72,6 +72,13 @@ double spody_greg_to_jd(int y, int m, int d, int hh, int mn, double ss) {
     return jd_midnight + day_frac;
 }
 
+double spody_greg_to_sec_j2000(int y, int m, int d, int hh, int mn,
+                               double ss) {
+    double jd0 = spody_greg_to_jd(y, m, d, 0, 0, 0.0);
+    return (jd0 - JD_J2000) * SECONDSxDAY
+         + (double)hh * 3600.0 + (double)mn * 60.0 + ss;
+}
+
 void spody_mjd_to_doy(double mjd, int *year_out, int *doy_out,
                       double *sec_of_day_out) {
     /* Day / time-of-day split first: everything below is integer. */

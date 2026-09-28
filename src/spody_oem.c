@@ -205,8 +205,7 @@ static int oem_scan_file(FILE *fin,
          * chain UTC -> TAI -> TT plus the TDB periodic term; TDB is
          * ET by definition. */
         double jd0      = spody_greg_to_jd(y, mo, d, 0, 0, 0.0);
-        double base_sec = (jd0 - JD_J2000) * SECONDSxDAY
-                        + hh * 3600.0 + mn * 60.0 + ss;
+        double base_sec = spody_greg_to_sec_j2000(y, mo, d, hh, mn, ss);
         double et;
         if (time_system == OEM_TS_UTC) {
             double tt_sec = base_sec

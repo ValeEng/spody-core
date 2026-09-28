@@ -394,10 +394,10 @@ static int _gps_scan_file(FILE *fin,
 
         /* GPST -> TT -> ET (TDB) bridge. RINEX TOC is GPST per
          * RINEX 3.05 sect. 6.10.1, and TT = GPST + 51.184 exactly;
-         * TT -> TDB adds the deltet periodic term (+/-1.657 ms). */
-        double jd_gpst = spody_greg_to_jd(y, mo, d, h, mi, sec);
-        double jd_tt   = jd_gpst + GPST2TT_SEC / SECONDSxDAY;
-        double tt_sec  = ET_FROM_JD(jd_tt);
+         * TT -> TDB adds the deltet periodic term (+/-1.657 ms). The
+         * epoch never passes through a whole JD (40 us resolution). */
+        double tt_sec  = spody_greg_to_sec_j2000(y, mo, d, h, mi, sec)
+                       + GPST2TT_SEC;
         double et      = tt_sec + spody_tdb_minus_tt(tt_sec);
 
         /* Outside the EOP table the rotation falls back to the

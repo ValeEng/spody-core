@@ -210,11 +210,13 @@ static int _glonass_scan_file(FILE *fin,
          * UTC -> TAI via the leap chain (37 s post-2017, exact for
          * older data too), then TAI -> TT with the fixed 32.184 s
          * (TT2TAI_SEC = TAI - TT), then TT -> TDB with the deltet
-         * periodic term (+/-1.657 ms). */
-        double jd_utc  = spody_greg_to_jd(y, mo, d, h, mi, sec);
-        double tai_utc = spody_tai_minus_utc(jd_utc - JD_MJD_EPOCH);
-        double jd_tt   = jd_utc + (tai_utc - TT2TAI_SEC) / SECONDSxDAY;
-        double tt_sec  = ET_FROM_JD(jd_tt);
+         * periodic term (+/-1.657 ms). The leap offset is the one of the
+         * calendar day (right for a 23:59:60 epoch too), and the epoch
+         * never passes through a whole JD (40 us resolution). */
+        double jd_day  = spody_greg_to_jd(y, mo, d, 0, 0, 0.0);
+        double tai_utc = spody_tai_minus_utc(jd_day - JD_MJD_EPOCH);
+        double tt_sec  = spody_greg_to_sec_j2000(y, mo, d, h, mi, sec)
+                       + tai_utc - TT2TAI_SEC;
         double et      = tt_sec + spody_tdb_minus_tt(tt_sec);
 
         /* Outside the EOP table the rotation falls back to the

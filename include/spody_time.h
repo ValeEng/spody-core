@@ -44,6 +44,15 @@ extern "C" {
  * working in (GPST, UTC, ...); the returned JD is in that same scale. */
 double spody_greg_to_jd(int y, int m, int d, int hh, int mn, double ss);
 
+/* Gregorian civil date -> seconds past J2000 (2000-01-01 12:00) in the
+ * SAME time scale as the input, without forming a full Julian Date:
+ * the midnight JD minus JD_J2000 is an exact half-integer, so the
+ * result keeps the resolution of the seconds field. A whole JD in one
+ * double resolves only ~40 us (8 cm along a GNSS track). Every text
+ * epoch (SP3, RINEX TOC, OEM) goes through here. */
+double spody_greg_to_sec_j2000(int y, int m, int d, int hh, int mn,
+                               double ss);
+
 /* TAI - UTC in seconds at the given UTC MJD. Piecewise-constant step
  * function over the post-1972 IERS Bulletin C insertions (10 s at
  * 1972-01-01 up to 37 s since 2017-01-01). For MJDs before the first

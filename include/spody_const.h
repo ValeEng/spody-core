@@ -90,6 +90,11 @@ extern "C" {
     // hosted by spody_time.c (spody_tai_minus_utc).
 #define GPST2TT_SEC      51.184          // TT - GPST (= 19 + 32.184)
 #define TT2TAI_SEC       (-32.184)       // TAI - TT (exact)
+    // BeiDou time (BDT) started at 2006-01-01 00:00:00 UTC, when
+    // GPST - UTC was 14 s: GPST = BDT + 14 s exactly. GLONASS system
+    // time is UTC(SU) + 3 h, leap seconds included (RINEX / SP3-d).
+#define BDT2GPST_SEC     14.0            // GPST - BDT (exact)
+#define GLOT_MINUS_UTC_SEC 10800.0       // GLONASS time - UTC (3 h)
 
     // TDB - TT periodic term (SPICE `deltet` algorithm):
     //   M = M0 + M1*ET, E = M + EB*sin(M), TDB-TT = K*sin(E).
@@ -127,7 +132,7 @@ extern "C" {
     // engine has always integrated with. Do not swap without
     // re-running the validation suite against SPICE.
 #define EARTH_MU   398600.4415        // alt: 398600.435507 (DE440)
-#define MOON_MU    4902.8005821478    // alt: 4902.798815861232 (DE440)
+#define MOON_MU    4902.8005821478    // alt: 4902.8001184575496 (DE440 BODY301_GM)
 #define SUN_MU     132712440017.99    // alt: 1.32712440018e11
 #define MARS_MU    42828.314258067    // alt: 42828.375214 (system GM)
 #define MERCURY_MU 22032.080486418
@@ -138,7 +143,12 @@ extern "C" {
 #define NEPTUNE_MU 6836534.0638793
 #define PLUTO_MU   981.60088770700
 
-    // Mean radii [km] from SPICE pck00011.
+    // Radii [km] from SPICE pck00011 (BODYnnn_RADII). Not all of the
+    // same kind: the Moon, Mercury and Venus are spheres there; the
+    // Earth and the giant planets carry their EQUATORIAL radius (Earth
+    // mean 6371.0084); Mars carries its POLAR one (equatorial 3396.19).
+    // They size the occulting discs of the eclipse model, the IMPACT
+    // sphere and the bodies drawn by the GUI.
 #define MOON_RADIUS    1737.4
 #define EARTH_RADIUS   6378.1366
 #define SUN_RADIUS     695700.0
@@ -191,7 +201,7 @@ extern "C" {
     // WGS-84 reference ellipsoid (NGA.STND.0036). Used for the
     // ECEF -> geodetic conversion feeding the Earth atmosphere model
     // (NRLMSISE-00 takes geodetic latitude/altitude). Distinct from
-    // EARTH_RADIUS (SPICE mean radius, used for impact/eclipse
+    // EARTH_RADIUS (SPICE equatorial radius, used for impact/eclipse
     // geometry) on purpose -- do not merge them.
 #define WGS84_A_KM  6378.137
 #define WGS84_INV_F 298.257223563

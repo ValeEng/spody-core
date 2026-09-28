@@ -30,9 +30,12 @@
  *   for SP3-derived references.
  *
  * SP3 wire format we READ (subset sufficient for IGS orbit files):
- *   - Header rows up to and including the comment lines (slash-star);
- *     we read until the body keywords ("*  YYYY MM DD ..." or "P<id>")
- *     start appearing -- the converter does not validate the header.
+ *   - Header: the version letter (line 1, "#a".."#d") and the time
+ *     system of the first "%c" line (columns 10-12: GPS, GAL, QZS,
+ *     IRN, BDT, TAI, UTC, GLO). SP3-a/-b predate that field and are
+ *     GPS time by definition; any other value is refused, never
+ *     guessed (a UTC file read as GPS lands 18 s off: ~100 km along a
+ *     LAGEOS track). The rest of the header is not validated.
  *   - An epoch row is exactly "*  YYYY MM DD hh mm ss.ssssssss" with
  *     fixed columns per the spec; we use sscanf with 6 fields.
  *   - Each satellite position row is "P<id> x y z clock_bias  [flags]"
@@ -68,6 +71,32 @@
  * accuracy/exclude flag block, so 256 is comfortably above. */
 #define SPODY_SP3_LINE            256
 
+/* Time scales an SP3 epoch can be written in, after folding the ones
+ * that share GPS time's epoch and rate (GAL, QZS, IRN) into GPS. */
+typedef enum {
+    SP3_TS_GPS = 0,
+    SP3_TS_BDT,
+    SP3_TS_TAI,
+    SP3_TS_UTC,
+    SP3_TS_GLO
+} Sp3TimeScale;
+
+/* Resolve the "%c" time-system field; -1 when it is not one we can
+ * convert exactly. */
+static int sp3_time_scale(char version, const char ts[4]) {
+    if (!strcmp(ts, "GPS") || !strcmp(ts, "GAL") ||
+        !strcmp(ts, "QZS") || !strcmp(ts, "IRN")) return SP3_TS_GPS;
+    if (!strcmp(ts, "BDT")) return SP3_TS_BDT;
+    if (!strcmp(ts, "TAI")) return SP3_TS_TAI;
+    if (!strcmp(ts, "UTC")) return SP3_TS_UTC;
+    if (!strcmp(ts, "GLO")) return SP3_TS_GLO;
+    /* SP3-a and SP3-b have no time-system field (a "ccc" placeholder
+     * or no %c line at all): their epochs are GPS time. */
+    if ((version == 'a' || version == 'b') &&
+        (ts[0] == '\0' || !strcmp(ts, "ccc"))) return SP3_TS_GPS;
+    return -1;
+}
+
 /* Write the 24-byte SPDYOUT_ preamble. Returns 0 on success, non-zero
  * on a short write (which on a fresh fopen("wb") essentially never
  * happens, but we still check for diagnostic clarity). */
@@ -100,6 +129,9 @@ static int _sp3_scan_file(FILE *fin,
     char line[SPODY_SP3_LINE];
     double cur_et = 0.0;
     int    have_epoch = 0;
+    char   version = 0;          /* 'a'..'d', from line 1 */
+    char   ts_field[4] = "";     /* first %c line, columns 10-12 */
+    int    scale = -1;           /* resolved at the first epoch row */
     size_t n_records_this = 0;
     double et_first_this  = 0.0;
     double et_last_this   = 0.0;
@@ -111,6 +143,17 @@ static int _sp3_scan_file(FILE *fin,
     size_t pos_prefix_len = strlen(pos_prefix);
 
     while (fgets(line, sizeof line, fin)) {
+        if (line[0] == '#' && line[1] != '#' && version == 0) {
+            version = line[1];
+            continue;
+        }
+        if (line[0] == '%' && line[1] == 'c' && ts_field[0] == '\0') {
+            if (strlen(line) >= 12) {
+                memcpy(ts_field, line + 9, 3);
+                ts_field[3] = '\0';
+            }
+            continue;
+        }
         if (line[0] == '*' && line[1] == ' ') {
             int    yy, mm, dd, hh, mn;
             double ss;
@@ -118,13 +161,40 @@ static int _sp3_scan_file(FILE *fin,
                        &yy, &mm, &dd, &hh, &mn, &ss) != 6) {
                 continue;
             }
-            /* SP3 epochs are GPST; TT = GPST + 51.184 s exactly, no
-             * leap-second table required (GPST2TT_SEC in
-             * spody_const.h); TT -> TDB adds the deltet periodic
-             * term (+/-1.657 ms). */
-            double jd_gps = spody_greg_to_jd(yy, mm, dd, hh, mn, ss);
-            double jd_tt  = jd_gps + GPST2TT_SEC / SECONDSxDAY;
-            double tt_sec = ET_FROM_JD(jd_tt);
+            if (scale < 0) {
+                scale = sp3_time_scale(version, ts_field);
+                if (scale < 0) {
+                    spody_log_eprintf(
+                           "sp3: '%s': time system '%s' (SP3-%c) is not "
+                           "supported (GPS, GAL, QZS, IRN, BDT, TAI, UTC, "
+                           "GLO); file refused\n",
+                           input_sp3, ts_field, version ? version : '?');
+                    return 1;
+                }
+            }
+            /* Epoch -> TT, exactly, per scale: GPS-aligned scales are
+             * TT - 51.184 s, BDT a further 14 s behind, TAI TT - 32.184
+             * s; UTC needs the leap offset of its calendar day (right
+             * for a 23:59:60 epoch too), and GLONASS time is UTC + 3 h,
+             * so its day is the UTC one three hours earlier. Then
+             * TT -> TDB adds the deltet periodic term (+/-1.657 ms). */
+            double base = spody_greg_to_sec_j2000(yy, mm, dd, hh, mn, ss);
+            double tt_sec;
+            if (scale == SP3_TS_GPS) {
+                tt_sec = base + GPST2TT_SEC;
+            } else if (scale == SP3_TS_BDT) {
+                tt_sec = base + BDT2GPST_SEC + GPST2TT_SEC;
+            } else if (scale == SP3_TS_TAI) {
+                tt_sec = base - TT2TAI_SEC;
+            } else {
+                double jd_day = spody_greg_to_jd(yy, mm, dd, 0, 0, 0.0);
+                if (scale == SP3_TS_GLO) {
+                    base -= GLOT_MINUS_UTC_SEC;
+                    if (hh < 3) jd_day -= 1.0;
+                }
+                tt_sec = base + spody_tai_minus_utc(jd_day - JD_MJD_EPOCH)
+                       - TT2TAI_SEC;
+            }
             cur_et        = tt_sec + spody_tdb_minus_tt(tt_sec);
             have_epoch    = 1;
             continue;
@@ -190,8 +260,8 @@ static int _sp3_scan_file(FILE *fin,
     } else {
         double duration_h = (et_last_this - et_first_this) / 3600.0;
         spody_log_eprintf(
-               "sp3: '%s' -> %zu records (sat=%s, et=%.6f..%.6f, %.3f h)\n",
-               input_sp3, n_records_this, sat_id,
+               "sp3: '%s' (time %s) -> %zu records (sat=%s, et=%.6f..%.6f, %.3f h)\n",
+               input_sp3, ts_field[0] ? ts_field : "GPS", n_records_this, sat_id,
                et_first_this, et_last_this, duration_h);
     }
     return 0;
