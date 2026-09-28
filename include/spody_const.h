@@ -131,8 +131,12 @@ extern "C" {
     // differ in the last digits; the ones below are the values the
     // engine has always integrated with. Do not swap without
     // re-running the validation suite against SPICE.
-#define EARTH_MU   398600.4415        // alt: 398600.435507 (DE440)
-#define MOON_MU    4902.8005821478    // alt: 4902.8001184575496 (DE440 BODY301_GM)
+    // A central body with a harmonics file does not use these: its
+    // two-body term takes the GM of the file, the one its normalized
+    // coefficients were estimated with. The values below serve the
+    // central body without harmonics, the third bodies and CR3BP.
+#define EARTH_MU   398600.4415        // = EIGEN-6C4 GM (TT-compatible); alt: 398600.435507 (DE440)
+#define MOON_MU    4902.8001184575496 // DE440 BODY301_GM (GRAIL era); was 4902.8005821478 (DE405, GMAT default)
 #define SUN_MU     132712440017.99    // alt: 1.32712440018e11
 #define MARS_MU    42828.314258067    // alt: 42828.375214 (system GM)
 #define MERCURY_MU 22032.080486418
