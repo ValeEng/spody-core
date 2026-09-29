@@ -182,6 +182,22 @@ typedef struct {
     double dc20_perm;
 } SpodySolidTides;
 
+/* Earth radiation pressure: albedo (reflected sunlight, dayside only)
+ * and infrared (thermal emission) of the Earth on a cannonball
+ * satellite, with the latitude- and season-dependent albedo and
+ * emissivity of Knocke et al. (1988). Each surface element is a
+ * Lambertian emitter of exitance
+ *   M = a F cos(zeta_sun) [if lit] + e F / 4,  F = solar flux at Earth,
+ * seen by the satellite with irradiance (M/pi) cos(theta) dA / d^2,
+ * theta = angle between the element's normal and the direction to the
+ * satellite. Integrated over the visible disk in solid angle.
+ * Acceleration = Cr (A/m) E / c, along each element -> satellite ray.
+ * Requires ctx->eph (Sun), ctx->get_bf_rotation (latitude) and a
+ * spacecraft with am_srp / Cr. Earth only (the application refuses
+ * any other central body). */
+void spody_force_earthradiation(const ForceModelContext *ctx, double et,
+                                const double r[3], double acc[3]);
+
 /* General relativity, Schwarzschild term of the central body (IERS
  * Conventions 2010 eq. 10.12, first line):
  *   a = GM/(c^2 r^3) [ (2(beta+gamma) GM/r - gamma v.v) r
@@ -223,6 +239,9 @@ struct ForceModelContext {
 
     /* general relativity, Schwarzschild term of the central body */
     int     enable_relativity;
+
+    /* Earth radiation pressure (albedo + infrared, Knocke) */
+    int     enable_earthradiation;
 
     /* ephemeris-driven perturbations (NULL = disabled). Must be
      * non-NULL whenever hg, n_third > 0, or enable_srp are active.
@@ -530,8 +549,8 @@ void spody_inertial_to_cr3bp_synodic(
  *
  * Bit-equivalence: acc_total reproduces the result of rhs_default at
  * the same (t, y), with the same summation order
- * (SRP, drag, each third body in turn, harmonics, solid tide,
- * relativity, then 2body).
+ * (SRP, Earth radiation, drag, each third body in turn, harmonics,
+ * solid tide, relativity, then 2body).
  *
  * The whole struct is written as one record into the breakdown binary
  * log -- including n_third and the per-body array. Internal padding
@@ -556,6 +575,8 @@ typedef struct {
     double acc_relativity[3];                          /* general relativity,
                                                         * Schwarzschild (appended:
                                                         * SPDYACC_ v3) */
+    double acc_earthradiation[3];                      /* Earth albedo + infrared
+                                                        * (appended: SPDYACC_ v4) */
 } ForceBreakdown;
 
 /* Re-evaluate the force decomposition on the given (t, y) and write the

@@ -259,6 +259,92 @@ void spody_force_solidtides(const ForceModelContext *ctx, double et,
 }
 
 /* ============================================================
+ * Atomic force: Earth radiation pressure (Knocke et al. 1988)
+ * ============================================================ */
+void spody_force_earthradiation(const ForceModelContext *ctx, double et,
+                                const double r[3], double acc[3]) {
+    static const double gx[EARTHRAD_N_NADIR] = { -GL6_X3, -GL6_X2, -GL6_X1,
+                                                  GL6_X1,  GL6_X2,  GL6_X3 };
+    static const double gw[EARTHRAD_N_NADIR] = {  GL6_W3,  GL6_W2,  GL6_W1,
+                                                  GL6_W1,  GL6_W2,  GL6_W3 };
+    double R  = ctx->R_central;
+    double rn = sqrt(r[0]*r[0] + r[1]*r[1] + r[2]*r[2]);
+    acc[0] = acc[1] = acc[2] = 0.0;
+    if (!(rn > R)) return;
+
+    /* Sun direction, and the solar flux at the Earth as F/c in the
+     * units spody_force_srp uses (km/s^2 per m^2/kg of A/m) */
+    double sun[3];
+    spody_get_ephposition(ctx->eph, ctx->naif_central, SUN_NAIF, et, sun);
+    double ds = sqrt(sun[0]*sun[0] + sun[1]*sun[1] + sun[2]*sun[2]);
+    double p_sun = SOLAR_LUMINOSITY_4PIC / (ds * ds);
+    for (int i = 0; i < 3; ++i) sun[i] /= ds;
+
+    /* body-fixed z axis in ICRF: sin(latitude) = z_bf . n */
+    double R_i2bf[3][3], R_bf2i[3][3];
+    ctx->get_bf_rotation(ctx, et, R_i2bf, R_bf2i);
+    const double *zbf = R_i2bf[2];
+
+    /* season */
+    double wt = 2.0 * PI * (et - KNOCKE_T0_ET) / JULIAN_YEAR_S;
+    double a1 = KNOCKE_C0 + KNOCKE_C1 * cos(wt) + KNOCKE_C2 * sin(wt);
+    double e1 = KNOCKE_K0 + KNOCKE_K1 * cos(wt) + KNOCKE_K2 * sin(wt);
+
+    /* ray basis: z toward nadir, x and y across it */
+    double zh[3] = { -r[0]/rn, -r[1]/rn, -r[2]/rn };
+    double hp[3] = { 1.0, 0.0, 0.0 };
+    if (fabs(zh[0]) > 0.9) { hp[0] = 0.0; hp[1] = 1.0; }
+    double xh[3] = { zh[1]*hp[2] - zh[2]*hp[1],
+                     zh[2]*hp[0] - zh[0]*hp[2],
+                     zh[0]*hp[1] - zh[1]*hp[0] };
+    double xn = sqrt(xh[0]*xh[0] + xh[1]*xh[1] + xh[2]*xh[2]);
+    for (int i = 0; i < 3; ++i) xh[i] /= xn;
+    double yh[3] = { zh[1]*xh[2] - zh[2]*xh[1],
+                     zh[2]*xh[0] - zh[0]*xh[2],
+                     zh[0]*xh[1] - zh[1]*xh[0] };
+
+    /* cos(nadir angle) from cos(eta_max) = sqrt(1 - (R/r)^2) to 1 */
+    double ce_min = sqrt(1.0 - (R / rn) * (R / rn));
+    double half   = 0.5 * (1.0 - ce_min);
+    double dlam   = 2.0 * PI / EARTHRAD_N_AZIMUTH;
+    double E[3]   = { 0.0, 0.0, 0.0 };   /* sum of (M/F) dOmega (-ray) */
+    /* azimuth directions, (j + 1/2) dlam, by rotating the first one:
+     * the same for every ring, so computed once per call */
+    double caz[EARTHRAD_N_AZIMUTH], saz[EARTHRAD_N_AZIMUTH];
+    double cd = cos(dlam), sd = sin(dlam);
+    caz[0] = cos(0.5 * dlam);
+    saz[0] = sin(0.5 * dlam);
+    for (int j = 1; j < EARTHRAD_N_AZIMUTH; ++j) {
+        caz[j] = caz[j-1] * cd - saz[j-1] * sd;
+        saz[j] = saz[j-1] * cd + caz[j-1] * sd;
+    }
+    for (int k = 0; k < EARTHRAD_N_NADIR; ++k) {
+        double ce = ce_min + half * (gx[k] + 1.0);
+        double se = sqrt(1.0 - ce * ce);
+        double w  = gw[k] * half * dlam;
+        for (int j = 0; j < EARTHRAD_N_AZIMUTH; ++j) {
+            double cl = caz[j], sl = saz[j], ray[3], n[3];
+            for (int i = 0; i < 3; ++i)
+                ray[i] = ce * zh[i] + se * (cl * xh[i] + sl * yh[i]);
+            /* nearest intersection of r + t ray with the sphere |p| = R */
+            double b = r[0]*ray[0] + r[1]*ray[1] + r[2]*ray[2];
+            double disc = b * b - (rn * rn - R * R);
+            double t = -b - sqrt(disc > 0.0 ? disc : 0.0);
+            for (int i = 0; i < 3; ++i) n[i] = (r[i] + t * ray[i]) / R;
+            double sphi = zbf[0]*n[0] + zbf[1]*n[1] + zbf[2]*n[2];
+            double p2   = 1.5 * sphi * sphi - 0.5;
+            double M    = 0.25 * (KNOCKE_E0 + e1 * sphi + KNOCKE_E2 * p2);
+            double cz   = n[0]*sun[0] + n[1]*sun[1] + n[2]*sun[2];
+            if (cz > 0.0)
+                M += (KNOCKE_A0 + a1 * sphi + KNOCKE_A2 * p2) * cz;
+            for (int i = 0; i < 3; ++i) E[i] -= M * w * ray[i];
+        }
+    }
+    double f = ctx->sat->Cr * ctx->sat->am_srp * p_sun / PI;
+    for (int i = 0; i < 3; ++i) acc[i] = f * E[i];
+}
+
+/* ============================================================
  * Atomic force: general relativity (IERS 2010 eq. 10.12, line 1)
  * ============================================================ */
 void spody_force_relativity(double mu, const double r[3], const double v[3],
@@ -491,6 +577,14 @@ int spody_force_rhs_default(double t, const double *y, double *dy, void *user) {
         double fraction = srp_lit_fraction(ctx, et, r, r_sat_to_sun);
 
         spody_force_srp(ctx->sat, fraction, r_sat_to_sun, acc_tmp);
+        acc_pert[0] += acc_tmp[0];
+        acc_pert[1] += acc_tmp[1];
+        acc_pert[2] += acc_tmp[2];
+    }
+
+    /* ---- 1b. Earth radiation (albedo + infrared) ------------- */
+    if (ctx->enable_earthradiation && ctx->eph) {
+        spody_force_earthradiation(ctx, et, r, acc_tmp);
         acc_pert[0] += acc_tmp[0];
         acc_pert[1] += acc_tmp[1];
         acc_pert[2] += acc_tmp[2];
@@ -740,6 +834,11 @@ void spody_force_breakdown(const ForceModelContext *ctx,
         spody_force_srp(ctx->sat, fraction, r_sat_to_sun, bd->acc_srp);
     }
 
+    /* Earth radiation (albedo + infrared) */
+    if (ctx->enable_earthradiation && ctx->eph) {
+        spody_force_earthradiation(ctx, et, r, bd->acc_earthradiation);
+    }
+
     /* drag */
     if (ctx->enable_drag) {
         spody_force_drag(ctx, et, r, v, bd->acc_drag);
@@ -748,7 +847,7 @@ void spody_force_breakdown(const ForceModelContext *ctx,
     /* total: accumulated exactly as rhs_default does -- a perturbation
      * sum starting from zero that takes SRP, drag, each third body in
      * turn, the harmonics, the solid tide and relativity, then the
-     * two-body term last. Adding the
+     * two-body term last; Earth radiation comes right after SRP. Adding the
      * pre-summed acc_thirdbody_total instead regroups the third bodies
      * and, with two or more of them next to a non-zero SRP, rounds
      * differently from the RHS. A disabled force is exactly zero here,
@@ -756,6 +855,8 @@ void spody_force_breakdown(const ForceModelContext *ctx,
     for (int k = 0; k < 3; k++) {
         double acc_pert = 0.0;
         acc_pert += bd->acc_srp[k];
+        if (ctx->enable_earthradiation && ctx->eph)
+            acc_pert += bd->acc_earthradiation[k];
         acc_pert += bd->acc_drag[k];
         for (int i = 0; i < bd->n_third; i++)
             acc_pert += bd->acc_thirdbody[i][k];

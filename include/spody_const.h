@@ -184,6 +184,47 @@ extern "C" {
 #define PPN_BETA            1.0
 #define PPN_GAMMA           1.0
 
+    // Earth radiation pressure: sunlight reflected by the Earth (albedo)
+    // and its thermal emission (infrared), Knocke, Ries & Tapley (1988),
+    // "Earth radiation pressure effects on satellites", AIAA 88-4292.
+    // Latitude phi and season t (seconds from KNOCKE_T0_ET):
+    //   albedo     a = A0 + (C0 + C1 cos wt + C2 sin wt) P1(sin phi) + A2 P2(sin phi)
+    //   emissivity e = E0 + (K0 + K1 cos wt + K2 sin wt) P1(sin phi) + E2 P2(sin phi)
+    // with w = 2 pi / Julian year. The original paper was not
+    // accessible; values as in Orekit's KnockeRediffusedForceModel,
+    // which match those quoted in the literature citing Knocke.
+#define KNOCKE_A0   0.34
+#define KNOCKE_C0   0.0
+#define KNOCKE_C1   0.10
+#define KNOCKE_C2   0.0
+#define KNOCKE_A2   0.29
+#define KNOCKE_E0   0.68
+#define KNOCKE_K0   0.0
+#define KNOCKE_K1   (-0.07)
+#define KNOCKE_K2   0.0
+#define KNOCKE_E2   (-0.18)
+    // Reference epoch of the seasonal term: 1981-12-22, taken at 00:00
+    // UTC as Orekit does (the paper gives the day only); ET from the
+    // SpOdy time chain (spopy.time.utc_to_et).
+#define KNOCKE_T0_ET        (-568900747.8163546)
+#define JULIAN_YEAR_S       31557600.0      // 365.25 d
+    // Quadrature over the Earth's disk as seen from the satellite:
+    // dA cos(theta)/d^2 is the solid angle of the element, so the
+    // irradiance is (M/pi) * integral of dOmega. Gauss-Legendre in the
+    // cosine of the nadir angle (6 nodes; the 3 positive ones and their
+    // weights, the others are symmetric) x 12 uniform azimuths = 72 rays.
+    // A uniformly bright sphere comes out exact; a realistic albedo with
+    // the terminator in view to ~3e-4 at every altitude, the same as
+    // 8 x 16 rays (the terminator step sets the floor).
+#define EARTHRAD_N_NADIR    6               // Gauss-Legendre nodes, GL6_* below
+#define EARTHRAD_N_AZIMUTH  12
+#define GL6_X1  0.23861918608319693
+#define GL6_X2  0.66120938646626448
+#define GL6_X3  0.93246951420315205
+#define GL6_W1  0.46791393457269137
+#define GL6_W2  0.36076157304813894
+#define GL6_W3  0.17132449237916975
+
     // NAIF id of the Moon: a tide-raising body for the Earth, and the
     // central body whose own tide the Earth raises.
 #define MOON_NAIF 301
