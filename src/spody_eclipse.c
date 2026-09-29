@@ -303,3 +303,28 @@ double spody_get_satlitfraction(const double sat2sun[3], double sun_radius,
     if (lit < 0.0)        lit = 0.0;
     return lit;
 }
+
+double spody_get_eclipse_residual(const double sat2sun[3], double sun_radius,
+                                  const double sat2occ[3], double occ_radius,
+                                  double threshold) {
+    double d_sun = sqrt(sat2sun[0] * sat2sun[0]
+                      + sat2sun[1] * sat2sun[1]
+                      + sat2sun[2] * sat2sun[2]);
+    double d     = sqrt(sat2occ[0] * sat2occ[0]
+                      + sat2occ[1] * sat2occ[1]
+                      + sat2occ[2] * sat2occ[2]);
+    if (!(d_sun > 0.0) || sun_radius <= 0.0 || occ_radius <= 0.0) return 1.0;
+    if (occ_radius >= d) return -1.0;           /* satellite inside the body */
+
+    double a = asin(clamp1(sun_radius / d_sun));
+    double b = asin(clamp1(occ_radius / d));
+    double c = acos(clamp1((sat2occ[0] * sat2sun[0] + sat2occ[1] * sat2sun[1]
+                          + sat2occ[2] * sat2sun[2]) / (d * d_sun)));
+
+    /* The two contacts are straight lines in c: the lit fraction is
+     * flat (0 or 1) on one side of them, which gives a root finder
+     * nothing to follow. */
+    if (threshold <= 0.0) return c - (b - a);   /* umbra contact     */
+    if (threshold >= 1.0) return c - (a + b);   /* penumbra contact  */
+    return (1.0 - disc_overlap_fraction(a, b, c)) - threshold;
+}

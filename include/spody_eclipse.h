@@ -75,6 +75,36 @@ double spody_get_satlitfraction(const double sat2sun[3], double sun_radius,
                                 const double sat2occ[][3],
                                 const double occ_radius[], int n_occ);
 
+/*
+ * Signed predicate of an eclipse event against ONE occulting body:
+ * positive when the satellite is more lit than `threshold`, negative
+ * when less, zero on the crossing. What a root finder needs, which
+ * the lit fraction alone is not at the two ends of its range: it is
+ * exactly 0 all through the umbra and exactly 1 all through sunlight,
+ * so "fraction - 0" and "fraction - 1" are flat on one side of their
+ * root (a bracketing solver then stops on any point of the flat side,
+ * and "fraction - 1" never even changes sign). With a, b, c the Sun's
+ * and the body's angular radii and their separation (as in
+ * spody_get_satlitfraction):
+ *
+ *     threshold <= 0   c - (b - a)          umbra contact (second/third)
+ *     threshold >= 1   c - (a + b)          penumbra contact (first/fourth)
+ *     otherwise        lit fraction - threshold
+ *
+ * The contact forms are the boundaries of the disc-overlap cases that
+ * spody_get_satlitfraction already branches on (Montenbruck & Gill's
+ * conical shadow: full sunlight for c >= a + b, total eclipse for
+ * c <= b - a), written as signed angles, linear through the root. In
+ * between, the fraction crosses the threshold inside the penumbra,
+ * where its slope is finite. A satellite inside the body returns -1.
+ *
+ * Unlike spody_get_satlitfraction there is no sunward-side screening:
+ * there c is near 90 degrees or more and every form is positive.
+ */
+double spody_get_eclipse_residual(const double sat2sun[3], double sun_radius,
+                                  const double sat2occ[3], double occ_radius,
+                                  double threshold);
+
 #ifdef __cplusplus
 }
 #endif

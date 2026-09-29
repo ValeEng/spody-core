@@ -135,19 +135,18 @@ static double body_distance2(const SpodyEvent *ev,
     return dx*dx + dy*dy + dz*dz;
 }
 
-/* Sun-lit fraction at state (t, y) given the event's occulting body.
- * Wraps spody_get_satlitfraction with a one-body occulter list: an
- * eclipse event is deliberately per-occulter ("eclipsed by the Moon"
- * and "eclipsed by the Earth" are two different events with their own
- * threshold), unlike the SRP force, which combines every occulter
- * into one lit fraction. The Sun is queried from the ephemeris in the
- * central frame; if the occulter is the central body its offset is
- * zero. */
-static double eclipse_fraction(const SpodyEvent *ev,
-                               const ForceModelContext *ctx,
-                               double t, const double *y)
+/* Satellite -> Sun and satellite -> occulter at state (t, y), in the
+ * central frame (the occulter offset is zero when it is the central
+ * body). An eclipse event is deliberately per-occulter ("eclipsed by
+ * the Moon" and "eclipsed by the Earth" are two different events with
+ * their own threshold), unlike the SRP force, which combines every
+ * occulter into one lit fraction. Returns 0 without an ephemeris. */
+static int eclipse_vectors(const SpodyEvent *ev,
+                           const ForceModelContext *ctx,
+                           double t, const double *y,
+                           double sat2sun[3], double sat2occ[1][3])
 {
-    if (!ctx->eph) return 1.0;   /* no ephemeris: pretend fully lit */
+    if (!ctx->eph) return 0;
     double et = ctx->et0 + t;
 
     double occ_pos_central[3] = { 0.0, 0.0, 0.0 };
@@ -159,13 +158,24 @@ static double eclipse_fraction(const SpodyEvent *ev,
     spody_get_ephposition(ctx->eph, ctx->naif_central, SUN_NAIF,
                           et, sun_pos_central);
 
-    double sat2occ[1][3], sat2sun[3];
     for (int i = 0; i < 3; i++) {
         sat2occ[0][i] = occ_pos_central[i]  - y[i];
         sat2sun[i]    = sun_pos_central[i]  - y[i];
     }
-    double radius = ev->radius_km;
-    return spody_get_satlitfraction(sat2sun, SUN_RADIUS, sat2occ, &radius, 1);
+    return 1;
+}
+
+/* Signed eclipse predicate at state (t, y): > 0 when the satellite is
+ * more lit than the event threshold (spody_get_eclipse_residual).
+ * Without an ephemeris the satellite counts as fully lit. */
+static double eclipse_signed(const SpodyEvent *ev,
+                             const ForceModelContext *ctx,
+                             double t, const double *y)
+{
+    double sat2sun[3], sat2occ[1][3];
+    if (!eclipse_vectors(ev, ctx, t, y, sat2sun, sat2occ)) return 1.0;
+    return spody_get_eclipse_residual(sat2sun, SUN_RADIUS, sat2occ[0],
+                                      ev->radius_km, ev->threshold_fraction);
 }
 
 int spody_event_check(SpodyEvent *ev,
@@ -238,8 +248,7 @@ static double eclipse_residual(double theta, void *args) {
     EventClosure *c = (EventClosure*)args;
     double t_theta = c->integ->t_old + theta * c->integ->h_old;
     spody_dense_state_rv6(c->integ, t_theta, c->y_buf);
-    double frac    = eclipse_fraction(c->ev, c->ctx, t_theta, c->y_buf);
-    return frac - c->ev->threshold_fraction;
+    return eclipse_signed(c->ev, c->ctx, t_theta, c->y_buf);
 }
 
 static double alt_crossing_residual(double theta, void *args) {
@@ -323,11 +332,9 @@ int spody_event_check_refined(SpodyEvent *ev,
              * before the next call overwrites them. */
 
             /* signed predicate at the two ends of the just-completed step */
-            double f_end   = eclipse_fraction(ev, ctx, integ->t, integ->y)
-                             - ev->threshold_fraction;
+            double f_end   = eclipse_signed(ev, ctx, integ->t, integ->y);
             double f_start = ev->prev_valid ? ev->prev_distance_signed
-                : (eclipse_fraction(ev, ctx, integ->t_old, integ->y_old)
-                   - ev->threshold_fraction);
+                : eclipse_signed(ev, ctx, integ->t_old, integ->y_old);
             ev->prev_distance_signed = f_end;
             ev->prev_valid = 1;
 
@@ -352,7 +359,11 @@ int spody_event_check_refined(SpodyEvent *ev,
 
             double t_trigger = integ->t_old + theta_root * integ->h_old;
             spody_dense_state_rv6(integ, t_trigger, cl.y_buf);
-            double frac_trig = eclipse_fraction(ev, ctx, t_trigger, cl.y_buf);
+            double sat2sun[3], sat2occ[1][3];
+            double radius    = ev->radius_km;
+            double frac_trig = eclipse_vectors(ev, ctx, t_trigger, cl.y_buf, sat2sun, sat2occ)
+                ? spody_get_satlitfraction(sat2sun, SUN_RADIUS, sat2occ, &radius, 1)
+                : 1.0;
 
             ev->triggered = 1;
             ev->t_trigger = t_trigger;
