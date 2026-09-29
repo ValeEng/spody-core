@@ -177,6 +177,39 @@ extern "C" {
     // rotating-frame state and a converted one agree to the bit.
 #define EARTH_NAIF 399
 
+    // NAIF id of the Moon: a tide-raising body for the Earth, and the
+    // central body whose own tide the Earth raises.
+#define MOON_NAIF 301
+
+    // Solid-body tides, frequency-independent part (IERS Conventions
+    // 2010, sec. 6.2.1, eq. 6.6-6.7, Table 6.3, anelastic Earth).
+    // k_nm = RE + i*IM; the imaginary parts carry the anelastic lag.
+    // Degree 3 is the Moon's tide only in practice (the Sun's is
+    // (R/r)^1 = 4e-5 of its degree 2); K2P_ are the k^(+)_2m that let a
+    // degree-2 forcing deform degree 4 through the Earth's flattening
+    // and rotation.
+#define TIDE_EARTH_K20_RE  0.30190
+#define TIDE_EARTH_K21_RE  0.29830
+#define TIDE_EARTH_K21_IM  (-0.00144)
+#define TIDE_EARTH_K22_RE  0.30102
+#define TIDE_EARTH_K22_IM  (-0.00130)
+#define TIDE_EARTH_K30     0.093
+#define TIDE_EARTH_K31     0.093
+#define TIDE_EARTH_K32     0.093
+#define TIDE_EARTH_K33     0.094
+#define TIDE_EARTH_K2P0    (-0.00089)
+#define TIDE_EARTH_K2P1    (-0.00080)
+#define TIDE_EARTH_K2P2    (-0.00057)
+    // Permanent part of the degree-2 zonal tide, (dC20)perm = A0*H0*k20
+    // (IERS 2010 eq. 6.14, k20 = 0.30190): what a zero-tide field
+    // already holds and the step-1 correction must not add again.
+#define TIDE_EARTH_A0H0    (-1.39141e-8)    // 4.4228e-8 * (-0.31460)
+    // Lunar Love number k2 (degree 2, one value for every order):
+    // GRGM1200B, GRAIL, estimated together with the field (PDS label
+    // gggrx_1200b_sha.lbl: 0.024116 +/- 0.000108). That field is
+    // tide-free: the full tide has to be added (LRO fits, 2026-09).
+#define TIDE_MOON_K2       0.024116
+
     // Half-width of the central difference that turns a body-fixed
     // rotation provider into an angular velocity (bodies other than the
     // Earth: the Moon, from its DE440 libration). 60 s keeps the

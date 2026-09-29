@@ -129,6 +129,136 @@ void spody_force_sphericalharmonics(const ForceModelContext *ctx,
 }
 
 /* ============================================================
+ * Atomic force: solid-body tide (IERS 2010 sec. 6.2.1, step 1)
+ * ============================================================ */
+
+/* Highest degree the tide corrections reach: 3 directly, 4 through
+ * the k^(+) coupling. The V/W recursion below needs one more. */
+#define TIDE_NMAX 4
+
+/* Acceleration of a field made only of the (unnormalized) coefficients
+ * C, S for 2 <= n <= TIDE_NMAX, at the body-fixed position r_bf:
+ * the V/W recursion of Montenbruck & Gill (2000) sec. 3.2.4-3.2.5.
+ * The static harmonics kernel is not reused: it is built once for a
+ * file's coefficient table, while these change at every call. */
+static void tide_field_accel(double gm, double r_ref,
+                             const double C[TIDE_NMAX + 1][TIDE_NMAX + 1],
+                             const double S[TIDE_NMAX + 1][TIDE_NMAX + 1],
+                             const double r_bf[3], double acc_bf[3]) {
+    double V[TIDE_NMAX + 3][TIDE_NMAX + 3] = {{0.0}};
+    double W[TIDE_NMAX + 3][TIDE_NMAX + 3] = {{0.0}};
+    double r2  = r_bf[0]*r_bf[0] + r_bf[1]*r_bf[1] + r_bf[2]*r_bf[2];
+    double rho = r_ref * r_ref / r2;
+    double x0  = r_ref * r_bf[0] / r2;
+    double y0  = r_ref * r_bf[1] / r2;
+    double z0  = r_ref * r_bf[2] / r2;
+
+    V[0][0] = r_ref / sqrt(r2);
+    W[0][0] = 0.0;
+    for (int m = 0; m <= TIDE_NMAX + 1; ++m) {
+        if (m > 0) {
+            V[m][m] = (2*m - 1) * (x0 * V[m-1][m-1] - y0 * W[m-1][m-1]);
+            W[m][m] = (2*m - 1) * (x0 * W[m-1][m-1] + y0 * V[m-1][m-1]);
+        }
+        if (m <= TIDE_NMAX) {
+            V[m+1][m] = (2*m + 1) * z0 * V[m][m];
+            W[m+1][m] = (2*m + 1) * z0 * W[m][m];
+        }
+        for (int n = m + 2; n <= TIDE_NMAX + 1; ++n) {
+            V[n][m] = ((2*n - 1) * z0 * V[n-1][m] - (n + m - 1) * rho * V[n-2][m]) / (n - m);
+            W[n][m] = ((2*n - 1) * z0 * W[n-1][m] - (n + m - 1) * rho * W[n-2][m]) / (n - m);
+        }
+    }
+
+    double ax = 0.0, ay = 0.0, az = 0.0;
+    for (int n = 2; n <= TIDE_NMAX; ++n) {
+        ax -= C[n][0] * V[n+1][1];
+        ay -= C[n][0] * W[n+1][1];
+        az += (n + 1) * (-C[n][0] * V[n+1][0]);
+        for (int m = 1; m <= n; ++m) {
+            double fac = 0.5 * (n - m + 1) * (n - m + 2);
+            ax += 0.5 * (-C[n][m] * V[n+1][m+1] - S[n][m] * W[n+1][m+1])
+                + fac * ( C[n][m] * V[n+1][m-1] + S[n][m] * W[n+1][m-1]);
+            ay += 0.5 * (-C[n][m] * W[n+1][m+1] + S[n][m] * V[n+1][m+1])
+                + fac * (-C[n][m] * W[n+1][m-1] + S[n][m] * V[n+1][m-1]);
+            az += (n - m + 1) * (-C[n][m] * V[n+1][m] - S[n][m] * W[n+1][m]);
+        }
+    }
+    double k = gm / (r_ref * r_ref);
+    acc_bf[0] = k * ax;
+    acc_bf[1] = k * ay;
+    acc_bf[2] = k * az;
+}
+
+void spody_force_solidtides(const ForceModelContext *ctx, double et,
+                            const double r[3], double acc[3]) {
+    const SpodySolidTides *td = ctx->tides;
+    double R_i2bf[3][3], R_bf2i[3][3];
+    ctx->get_bf_rotation(ctx, et, R_i2bf, R_bf2i);
+
+    /* normalized corrections, eq. 6.6 (degree n) and 6.7 (k^(+)) */
+    double dC[TIDE_NMAX + 1][TIDE_NMAX + 1] = {{0.0}};
+    double dS[TIDE_NMAX + 1][TIDE_NMAX + 1] = {{0.0}};
+    for (int j = 0; j < td->n_raisers; ++j) {
+        double p[3], pb[3];
+        spody_get_ephposition(ctx->eph, ctx->naif_central,
+                              td->raiser_naif[j], et, p);
+        for (int i = 0; i < 3; ++i)
+            pb[i] = R_i2bf[i][0]*p[0] + R_i2bf[i][1]*p[1] + R_i2bf[i][2]*p[2];
+        double rj  = sqrt(pb[0]*pb[0] + pb[1]*pb[1] + pb[2]*pb[2]);
+        double s   = pb[2] / rj;                    /* sin(latitude) */
+        double c   = sqrt(pb[0]*pb[0] + pb[1]*pb[1]) / rj;
+        double lam = atan2(pb[1], pb[0]);
+        double q   = td->r_ref / rj;
+        double f2  = (td->raiser_mu[j] / td->gm) * q * q * q;
+        double f3  = f2 * q;
+
+        /* fully normalized Legendre functions, no Condon-Shortley phase */
+        double P[4][4] = {{0.0}};
+        P[2][0] = sqrt(5.0) * 0.5 * (3.0*s*s - 1.0);
+        P[2][1] = sqrt(15.0) * s * c;
+        P[2][2] = sqrt(15.0) * 0.5 * c * c;
+        P[3][0] = sqrt(7.0) * 0.5 * s * (5.0*s*s - 3.0);
+        P[3][1] = sqrt(42.0) * 0.25 * c * (5.0*s*s - 1.0);
+        P[3][2] = sqrt(105.0) * 0.5 * s * c * c;
+        P[3][3] = sqrt(70.0) * 0.25 * c * c * c;
+
+        for (int n = 2; n <= td->max_degree; ++n) {
+            double f = (n == 2 ? f2 : f3) / (2*n + 1);
+            for (int m = 0; m <= n; ++m) {
+                double cm = cos(m * lam), sm = sin(m * lam);
+                /* (kr + i ki)(cos - i sin) = dC - i dS */
+                dC[n][m] += f * P[n][m] * (td->k_re[n][m]*cm + td->k_im[n][m]*sm);
+                dS[n][m] += f * P[n][m] * (td->k_re[n][m]*sm - td->k_im[n][m]*cm);
+            }
+        }
+        for (int m = 0; m <= 2; ++m) {
+            double f = f2 / 5.0 * td->kplus[m] * P[2][m];
+            dC[4][m] += f * cos(m * lam);
+            dS[4][m] += f * sin(m * lam);
+        }
+    }
+    dC[2][0] -= td->dc20_perm;
+
+    /* normalized -> unnormalized: N_nm = sqrt((2-d0m)(2n+1)(n-m)!/(n+m)!) */
+    static const double fact[2 * TIDE_NMAX + 1] =
+        { 1, 1, 2, 6, 24, 120, 720, 5040, 40320 };
+    for (int n = 2; n <= TIDE_NMAX; ++n)
+        for (int m = 0; m <= n; ++m) {
+            double N = sqrt((m == 0 ? 1.0 : 2.0) * (2*n + 1) * fact[n-m] / fact[n+m]);
+            dC[n][m] *= N;
+            dS[n][m] *= N;
+        }
+
+    double r_bf[3], a_bf[3];
+    for (int i = 0; i < 3; ++i)
+        r_bf[i] = R_i2bf[i][0]*r[0] + R_i2bf[i][1]*r[1] + R_i2bf[i][2]*r[2];
+    tide_field_accel(td->gm, td->r_ref, dC, dS, r_bf, a_bf);
+    for (int i = 0; i < 3; ++i)
+        acc[i] = R_bf2i[i][0]*a_bf[0] + R_bf2i[i][1]*a_bf[1] + R_bf2i[i][2]*a_bf[2];
+}
+
+/* ============================================================
  * Atomic force: third body (Cowell)
  * ============================================================ */
 void spody_force_thirdbody_cowell(double mu_3, const double r_3[3],
@@ -378,6 +508,14 @@ int spody_force_rhs_default(double t, const double *y, double *dy, void *user) {
         acc_pert[2] += acc_tmp[2];
     }
 
+    /* ---- 4b. solid-body tide ---------------------------------- */
+    if (ctx->tides && ctx->eph) {
+        spody_force_solidtides(ctx, et, r, acc_tmp);
+        acc_pert[0] += acc_tmp[0];
+        acc_pert[1] += acc_tmp[1];
+        acc_pert[2] += acc_tmp[2];
+    }
+
     /* ---- 5. central two-body (largest term, summed last) ------ */
     double acc_2body[3];
     spody_force_twobody(ctx->mu_central, r, acc_2body);
@@ -536,6 +674,11 @@ void spody_force_breakdown(const ForceModelContext *ctx,
                                        bd->acc_sphericalharmonics);
     }
 
+    /* solid-body tide */
+    if (ctx->tides && ctx->eph) {
+        spody_force_solidtides(ctx, et, r, bd->acc_solidtides);
+    }
+
     /* third bodies (per-body + total) */
     if (ctx->n_third > 0 && ctx->eph) {
         int n = ctx->n_third;
@@ -575,7 +718,8 @@ void spody_force_breakdown(const ForceModelContext *ctx,
 
     /* total: accumulated exactly as rhs_default does -- a perturbation
      * sum starting from zero that takes SRP, drag, each third body in
-     * turn and the harmonics, then the two-body term last. Adding the
+     * turn, the harmonics and the solid tide, then the two-body term
+     * last. Adding the
      * pre-summed acc_thirdbody_total instead regroups the third bodies
      * and, with two or more of them next to a non-zero SRP, rounds
      * differently from the RHS. A disabled force is exactly zero here,
@@ -587,6 +731,8 @@ void spody_force_breakdown(const ForceModelContext *ctx,
         for (int i = 0; i < bd->n_third; i++)
             acc_pert += bd->acc_thirdbody[i][k];
         acc_pert += bd->acc_sphericalharmonics[k];
+        if (ctx->tides && ctx->eph)
+            acc_pert += bd->acc_solidtides[k];
         bd->acc_total[k] = acc_pert + bd->acc_2body[k];
     }
 }

@@ -151,6 +151,43 @@ void spody_bf_rotation_moon(const ForceModelContext *ctx, double et,
 void spody_bf_angular_velocity_icrf(const ForceModelContext *ctx, double et,
                                     double omega_icrf[3]);
 
+/* Solid-body tide of the central body: the potential its elastic
+ * deformation adds under the pull of the tide-raising bodies (IERS
+ * Conventions 2010 sec. 6.2.1, frequency-independent step, eq.
+ * 6.6-6.7). Every evaluation turns the raisers' body-fixed positions
+ * into corrections of the normalized coefficients,
+ *   dC_nm - i dS_nm = k_nm/(2n+1) sum_j (GM_j/GM)(R/r_j)^(n+1)
+ *                     Pbar_nm(sin phi_j) exp(-i m lambda_j),
+ * for n = 2..max_degree, plus the degree-4 terms a degree-2 forcing
+ * induces through k^(+)_2m (all zero: no coupling), and returns the
+ * acceleration of that small field. The direct pull of the raisers
+ * on the satellite is not here: it is the third-body force.
+ *
+ * Filled by the application from the central body's registry row;
+ * the engine holds no per-body knowledge. `gm` and `r_ref` are the
+ * harmonics file's, the ones its coefficients are normalized with.
+ * `dc20_perm` is the permanent part a zero-tide field already holds
+ * and the correction must leave out; 0 for a tide-free field. */
+#define SPODY_TIDE_MAX_RAISERS 2
+typedef struct {
+    int    n_raisers;
+    int    raiser_naif[SPODY_TIDE_MAX_RAISERS];
+    double raiser_mu[SPODY_TIDE_MAX_RAISERS];   /* km^3/s^2           */
+    int    max_degree;                          /* 2 or 3             */
+    double k_re[4][4];                          /* [n][m], n = 2..3   */
+    double k_im[4][4];
+    double kplus[3];                            /* k^(+)_2m, m = 0..2 */
+    double gm;                                  /* km^3/s^2           */
+    double r_ref;                               /* km                 */
+    double dc20_perm;
+} SpodySolidTides;
+
+/* Acceleration (ICRF, km/s^2) of the solid tide at `et` for a
+ * satellite at `r` (ICRF, central-body centred). Requires ctx->tides,
+ * ctx->eph and ctx->get_bf_rotation. */
+void spody_force_solidtides(const ForceModelContext *ctx, double et,
+                            const double r[3], double acc[3]);
+
 struct ForceModelContext {
     /* central body (the body the satellite orbits) */
     double  mu_central;          /* km^3/s^2                          */
@@ -170,6 +207,9 @@ struct ForceModelContext {
 
     /* spherical harmonics on the central body (NULL = disabled) */
     HarmonicGravity *hg;
+
+    /* solid-body tide of the central body (NULL = disabled) */
+    const SpodySolidTides *tides;
 
     /* ephemeris-driven perturbations (NULL = disabled). Must be
      * non-NULL whenever hg, n_third > 0, or enable_srp are active.
@@ -477,7 +517,8 @@ void spody_inertial_to_cr3bp_synodic(
  *
  * Bit-equivalence: acc_total reproduces the result of rhs_default at
  * the same (t, y), with the same summation order
- * (SRP, drag, each third body in turn, harmonics, then 2body).
+ * (SRP, drag, each third body in turn, harmonics, solid tide, then
+ * 2body).
  *
  * The whole struct is written as one record into the breakdown binary
  * log -- including n_third and the per-body array. Internal padding
@@ -497,6 +538,8 @@ typedef struct {
     double acc_srp[3];                                 /* SRP                     */
     double acc_drag[3];                                /* drag (placeholder)      */
     double eclipse_fraction;                           /* 1=full sun, 0=full umbra */
+    double acc_solidtides[3];                          /* solid-body tide (appended:
+                                                        * SPDYACC_ v2) */
 } ForceBreakdown;
 
 /* Re-evaluate the force decomposition on the given (t, y) and write the
