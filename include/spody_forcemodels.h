@@ -217,7 +217,7 @@ void spody_force_solidtides(const ForceModelContext *ctx, double et,
 struct ForceModelContext {
     /* central body (the body the satellite orbits) */
     double  mu_central;          /* km^3/s^2                          */
-    double  R_central;           /* km - mean radius (impact check)   */
+    double  R_central;           /* km - equatorial radius            */
     int     naif_central;        /* NAIF id, e.g. 301 (Moon), 399 (Earth) */
 
     /* Body-fixed orientation provider for `naif_central`. Used by
@@ -275,13 +275,15 @@ struct ForceModelContext {
      * Sun for an Earth orbiter both land in the acceleration.
      *
      * srp_n_occulters == 0 disables shadow modelling: the satellite
-     * is then lit at all times. Entries with radius <= 0 are ignored
+     * is then lit at all times. Entries with r_eq <= 0 are ignored
      * individually, which is how a run can keep a body in the list
-     * without letting it cast a shadow. */
+     * without letting it cast a shadow. Each shape is a sphere or a
+     * spheroid (force_model.body_shape), its pole in the integration
+     * frame, fixed for the run. */
     int     enable_srp;
     int     srp_n_occulters;
-    int     srp_occulter_naif  [SPODY_ECL_MAX_OCCULTERS];
-    double  srp_occulter_radius[SPODY_ECL_MAX_OCCULTERS];  /* km */
+    int     srp_occulter_naif [SPODY_ECL_MAX_OCCULTERS];
+    SpodyBodyShape srp_occulter_shape[SPODY_ECL_MAX_OCCULTERS];
     double  sun_radius;                                    /* km */
 
     /* atmospheric drag.

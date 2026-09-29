@@ -147,16 +147,15 @@ extern "C" {
 #define NEPTUNE_MU 6836534.0638793
 #define PLUTO_MU   981.60088770700
 
-    // Radii [km] from SPICE pck00011 (BODYnnn_RADII). Not all of the
-    // same kind: the Moon, Mercury and Venus are spheres there; the
-    // Earth and the giant planets carry their EQUATORIAL radius (Earth
-    // mean 6371.0084); Mars carries its POLAR one (equatorial 3396.19).
-    // They size the occulting discs of the eclipse model, the IMPACT
-    // sphere and the bodies drawn by the GUI.
+    // Radii [km] from SPICE pck00011 (BODYnnn_RADII): the EQUATORIAL
+    // radius of every body (Earth mean 6371.0084). They size the bodies
+    // drawn by the GUI and, with force_model.body_shape =
+    // "equatorial_sphere", the occulting discs, the IMPACT sphere and
+    // the altitude reference.
 #define MOON_RADIUS    1737.4
 #define EARTH_RADIUS   6378.1366
 #define SUN_RADIUS     695700.0
-#define MARS_RADIUS    3376.20
+#define MARS_RADIUS    3396.19
 #define MERCURY_RADIUS 2440.53
 #define VENUS_RADIUS   6051.8
 #define JUPITER_RADIUS 71492.0
@@ -164,6 +163,54 @@ extern "C" {
 #define URANUS_RADIUS  25559.0
 #define NEPTUNE_RADIUS 24764.0
 #define PLUTO_RADIUS   1195.0
+
+    // Polar radii [km], pck00011 (third value of BODYnnn_RADII), for the
+    // bodies the kernel models as oblate spheroids. With body_shape =
+    // "ellipsoid" (the default) shadow, IMPACT and altitude use the
+    // spheroid of equatorial x polar radius. The Moon, Venus, the Sun
+    // and Pluto are spheres in pck00011 and have no entry.
+#define EARTH_RADIUS_POLAR   6356.7519
+#define MARS_RADIUS_POLAR    3376.20
+#define MERCURY_RADIUS_POLAR 2438.26
+#define JUPITER_RADIUS_POLAR 66854.0
+#define SATURN_RADIUS_POLAR  54364.0
+#define URANUS_RADIUS_POLAR  24973.0
+#define NEPTUNE_RADIUS_POLAR 24341.0
+
+    // Spin-axis direction in ICRF (IAU WGCCRE, as in pck00011
+    // BODYnnn_POLE_RA / _POLE_DEC): RA = RA0 + RA1*T, DEC = DEC0 + DEC1*T,
+    // degrees, T in Julian centuries TDB from J2000. It orients the
+    // spheroids above. The periodic terms of Neptune (0.7 deg) and the
+    // tiny ones of Jupiter are left out; the Earth's pole so obtained
+    // misses nutation (9 arcsec), which moves its limb by < 1 m.
+#define EARTH_POLE_RA0      0.0
+#define EARTH_POLE_RA1     -0.641
+#define EARTH_POLE_DEC0    90.0
+#define EARTH_POLE_DEC1    -0.557
+#define MARS_POLE_RA0     317.269202
+#define MARS_POLE_RA1      -0.10927547
+#define MARS_POLE_DEC0     54.432516
+#define MARS_POLE_DEC1     -0.05827105
+#define MERCURY_POLE_RA0  281.0103
+#define MERCURY_POLE_RA1   -0.0328
+#define MERCURY_POLE_DEC0  61.4155
+#define MERCURY_POLE_DEC1  -0.0049
+#define JUPITER_POLE_RA0  268.056595
+#define JUPITER_POLE_RA1   -0.006499
+#define JUPITER_POLE_DEC0  64.495303
+#define JUPITER_POLE_DEC1   0.002413
+#define SATURN_POLE_RA0    40.589
+#define SATURN_POLE_RA1    -0.036
+#define SATURN_POLE_DEC0   83.537
+#define SATURN_POLE_DEC1   -0.004
+#define URANUS_POLE_RA0   257.311
+#define URANUS_POLE_RA1     0.0
+#define URANUS_POLE_DEC0  -15.175
+#define URANUS_POLE_DEC1    0.0
+#define NEPTUNE_POLE_RA0  299.36
+#define NEPTUNE_POLE_RA1    0.0
+#define NEPTUNE_POLE_DEC0  43.46
+#define NEPTUNE_POLE_DEC1   0.0
 
     // NAIF id of the Sun. Spelled out here rather than inline because
     // two unrelated places special-case it: the SRP source direction

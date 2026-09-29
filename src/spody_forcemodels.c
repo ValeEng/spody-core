@@ -480,11 +480,11 @@ static double srp_lit_fraction(const ForceModelContext *ctx, double et,
     if (ctx->srp_n_occulters <= 0 || ctx->sun_radius <= 0.0) return 1.0;
 
     double sat2occ[SPODY_ECL_MAX_OCCULTERS][3];
-    double radius [SPODY_ECL_MAX_OCCULTERS];
+    SpodyBodyShape shape[SPODY_ECL_MAX_OCCULTERS];
     int    n = 0;
 
     for (int i = 0; i < ctx->srp_n_occulters; ++i) {
-        if (ctx->srp_occulter_radius[i] <= 0.0) continue;
+        if (ctx->srp_occulter_shape[i].r_eq <= 0.0) continue;
         double occ_pos[3] = { 0.0, 0.0, 0.0 };
         if (ctx->srp_occulter_naif[i] != ctx->naif_central) {
             spody_get_ephposition(ctx->eph, ctx->naif_central,
@@ -493,13 +493,13 @@ static double srp_lit_fraction(const ForceModelContext *ctx, double et,
         sat2occ[n][0] = occ_pos[0] - r[0];
         sat2occ[n][1] = occ_pos[1] - r[1];
         sat2occ[n][2] = occ_pos[2] - r[2];
-        radius[n]     = ctx->srp_occulter_radius[i];
+        shape[n]      = ctx->srp_occulter_shape[i];
         n++;
     }
     if (n == 0) return 1.0;
 
     return spody_get_satlitfraction(sat2sun, ctx->sun_radius,
-                                    sat2occ, radius, n);
+                                    sat2occ, shape, n);
 }
 
 /* ============================================================

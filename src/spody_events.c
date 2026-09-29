@@ -103,36 +103,55 @@ SpodyEvent spody_event_altitude_crossing_at_point(int naif_id,
     return ev;
 }
 
-/* Compute |r_sat - r_body|^2 in the integrator's working frame. Three
- * paths: (i) explicit fixed reference point set by the caller (CR3BP),
- * (ii) body is the central body (HF: origin), (iii) body is some other
- * body and its position comes from the ephemeris (HF: third bodies). */
-static double body_distance2(const SpodyEvent *ev,
-                               const ForceModelContext *ctx,
-                               double t, const double *y)
+/* Distance against the body's shape (see spody_event_body_distance).
+ * With `bounded`, for the IMPACT / ALT_CROSSING predicates, a spheroid
+ * is resolved only when it can matter: the geodetic altitude h of a
+ * point at distance d lies between d - r_eq and d - r_pol, so when the
+ * target altitude (0 for IMPACT) is outside that band the side is
+ * already known and a bound with the right sign is returned instead
+ * of the Bowring iteration. The predicate is evaluated at every step
+ * against the always-on IMPACT events; this keeps it to a sqrt away
+ * from the ground. The exact value is used wherever the number itself
+ * is logged. */
+static double body_distance(const SpodyEvent *ev,
+                            const ForceModelContext *ctx,
+                            double t, const double *y, int bounded)
 {
+    /* Satellite relative to the body in the integrator's working
+     * frame. Three paths: (i) explicit fixed reference point set by
+     * the caller (CR3BP), (ii) body is the central body (HF: origin),
+     * (iii) body is some other body and its position comes from the
+     * ephemeris (HF: third bodies). */
+    double r_rel[3] = { y[0], y[1], y[2] };
     if (ev->has_ref_point) {
-        double dx = y[0] - ev->ref_point[0];
-        double dy = y[1] - ev->ref_point[1];
-        double dz = y[2] - ev->ref_point[2];
-        return dx*dx + dy*dy + dz*dz;
+        for (int i = 0; i < 3; i++) r_rel[i] = y[i] - ev->ref_point[i];
+    } else if (ev->naif_id != ctx->naif_central) {
+        double body_pos[3] = {0.0, 0.0, 0.0};
+        if (ctx->eph) {
+            double et = ctx->et0 + t;
+            spody_get_ephposition(ctx->eph, ctx->naif_central, ev->naif_id, et, body_pos);
+        }
+        for (int i = 0; i < 3; i++) r_rel[i] = y[i] - body_pos[i];
     }
 
-    if (ev->naif_id == ctx->naif_central) {
-        /* satellite position is already in the central frame */
-        return y[0]*y[0] + y[1]*y[1] + y[2]*y[2];
+    SpodyBodyShape shape = { ev->radius_km, ev->polar_radius_km,
+                             { ev->pole[0], ev->pole[1], ev->pole[2] } };
+    if (bounded && shape.r_pol > 0.0 && shape.r_pol != shape.r_eq) {
+        double h_target = (ev->kind == SPODY_EVENT_KIND_ALT_CROSSING)
+                          ? ev->altitude_km : 0.0;
+        double d = sqrt(r_rel[0] * r_rel[0] + r_rel[1] * r_rel[1]
+                        + r_rel[2] * r_rel[2]);
+        if (d - shape.r_eq  > h_target) return d;                          /* surely above */
+        if (d - shape.r_pol < h_target) return d - shape.r_pol + shape.r_eq; /* surely below */
     }
+    return spody_body_shape_distance(&shape, r_rel);
+}
 
-    /* body other than the central: query its position in the central frame */
-    double body_pos[3] = {0.0, 0.0, 0.0};
-    if (ctx->eph) {
-        double et = ctx->et0 + t;
-        spody_get_ephposition(ctx->eph, ctx->naif_central, ev->naif_id, et, body_pos);
-    }
-    double dx = y[0] - body_pos[0];
-    double dy = y[1] - body_pos[1];
-    double dz = y[2] - body_pos[2];
-    return dx*dx + dy*dy + dz*dz;
+double spody_event_body_distance(const SpodyEvent *ev,
+                                 const ForceModelContext *ctx,
+                                 double t, const double *y)
+{
+    return body_distance(ev, ctx, t, y, 0);
 }
 
 /* Satellite -> Sun and satellite -> occulter at state (t, y), in the
@@ -174,8 +193,10 @@ static double eclipse_signed(const SpodyEvent *ev,
 {
     double sat2sun[3], sat2occ[1][3];
     if (!eclipse_vectors(ev, ctx, t, y, sat2sun, sat2occ)) return 1.0;
+    SpodyBodyShape shape = { ev->radius_km, ev->polar_radius_km,
+                             { ev->pole[0], ev->pole[1], ev->pole[2] } };
     return spody_get_eclipse_residual(sat2sun, SUN_RADIUS, sat2occ[0],
-                                      ev->radius_km, ev->threshold_fraction);
+                                      &shape, ev->threshold_fraction);
 }
 
 int spody_event_check(SpodyEvent *ev,
@@ -191,13 +212,13 @@ int spody_event_check(SpodyEvent *ev,
              * first fire (caller has already consumed them). */
             if (ev->triggered) break;
 
-            double d2 = body_distance2(ev, ctx, t, y);
-            if (d2 >= ev->radius_km * ev->radius_km) break;
+            double d  = body_distance(ev, ctx, t, y, 1);
+            if (d >= ev->radius_km) break;
 
             ev->triggered = 1;
             ev->t_trigger = t;
             for (int i = 0; i < 6; i++) ev->y_trigger[i] = y[i];
-            ev->distance_at_trigger = sqrt(d2);
+            ev->distance_at_trigger = spody_event_body_distance(ev, ctx, t, y);
             return 1;
         }
         case SPODY_EVENT_KIND_ECLIPSE:
@@ -240,8 +261,8 @@ static double impact_residual(double theta, void *args) {
     spody_dense_state_rv6(c->integ, t_theta, c->y_buf);
 
     /* distance to the body at that state */
-    double d2 = body_distance2(c->ev, c->ctx, t_theta, c->y_buf);
-    return sqrt(d2) - c->ev->radius_km;
+    double d  = body_distance(c->ev, c->ctx, t_theta, c->y_buf, 1);
+    return d - c->ev->radius_km;
 }
 
 static double eclipse_residual(double theta, void *args) {
@@ -255,8 +276,8 @@ static double alt_crossing_residual(double theta, void *args) {
     EventClosure *c = (EventClosure*)args;
     double t_theta = c->integ->t_old + theta * c->integ->h_old;
     spody_dense_state_rv6(c->integ, t_theta, c->y_buf);
-    double d2 = body_distance2(c->ev, c->ctx, t_theta, c->y_buf);
-    return sqrt(d2) - c->ev->radius_km - c->ev->altitude_km;
+    double d  = body_distance(c->ev, c->ctx, t_theta, c->y_buf, 1);
+    return d - c->ev->radius_km - c->ev->altitude_km;
 }
 
 int spody_event_check_refined(SpodyEvent *ev,
@@ -281,9 +302,9 @@ int spody_event_check_refined(SpodyEvent *ev,
              * step. On the very first call (no cache yet) f_start is
              * computed from integ->y_old; on subsequent calls it comes
              * from the value cached on the previous call. */
-            double f_end   = sqrt(body_distance2(ev, ctx, integ->t, integ->y)) - ev->radius_km;
+            double f_end   = body_distance(ev, ctx, integ->t, integ->y, 1) - ev->radius_km;
             double f_start = ev->prev_valid ? ev->prev_distance_signed
-                : (sqrt(body_distance2(ev, ctx, integ->t_old, integ->y_old)) - ev->radius_km);
+                : (body_distance(ev, ctx, integ->t_old, integ->y_old, 1) - ev->radius_km);
             ev->prev_distance_signed = f_end;
             ev->prev_valid = 1;
 
@@ -291,7 +312,7 @@ int spody_event_check_refined(SpodyEvent *ev,
             if ((f_start > 0.0) == (f_end > 0.0)) break;
 
             /* Bracket Brent on theta in [0, 1] using the closure that
-             * evaluates the dense state + body_distance2 at each probe. */
+             * evaluates the dense state + body distance at each probe. */
             EventClosure cl;
             cl.ev    = ev;
             cl.ctx   = ctx;
@@ -317,12 +338,12 @@ int spody_event_check_refined(SpodyEvent *ev,
              * matches t_trigger. */
             double t_trigger = integ->t_old + theta_root * integ->h_old;
             spody_dense_state_rv6(integ, t_trigger, cl.y_buf);
-            double d2_trig   = body_distance2(ev, ctx, t_trigger, cl.y_buf);
+            double d_trig    = spody_event_body_distance(ev, ctx, t_trigger, cl.y_buf);
 
             ev->triggered = 1;
             ev->t_trigger = t_trigger;
             for (int i = 0; i < 6; i++) ev->y_trigger[i] = cl.y_buf[i];
-            ev->distance_at_trigger = sqrt(d2_trig);
+            ev->distance_at_trigger = d_trig;
             return 1;
         }
         case SPODY_EVENT_KIND_ECLIPSE: {
@@ -360,9 +381,10 @@ int spody_event_check_refined(SpodyEvent *ev,
             double t_trigger = integ->t_old + theta_root * integ->h_old;
             spody_dense_state_rv6(integ, t_trigger, cl.y_buf);
             double sat2sun[3], sat2occ[1][3];
-            double radius    = ev->radius_km;
+            SpodyBodyShape shape = { ev->radius_km, ev->polar_radius_km,
+                                     { ev->pole[0], ev->pole[1], ev->pole[2] } };
             double frac_trig = eclipse_vectors(ev, ctx, t_trigger, cl.y_buf, sat2sun, sat2occ)
-                ? spody_get_satlitfraction(sat2sun, SUN_RADIUS, sat2occ, &radius, 1)
+                ? spody_get_satlitfraction(sat2sun, SUN_RADIUS, sat2occ, &shape, 1)
                 : 1.0;
 
             ev->triggered = 1;
@@ -385,10 +407,10 @@ int spody_event_check_refined(SpodyEvent *ev,
              * state -- Brent runs only at the actual crossing step --
              * but it's exposed for users with many altitude bands. */
             double threshold = ev->radius_km + ev->altitude_km;
-            double f_end   = sqrt(body_distance2(ev, ctx, integ->t, integ->y))
+            double f_end   = body_distance(ev, ctx, integ->t, integ->y, 1)
                              - threshold;
             double f_start = ev->prev_valid ? ev->prev_distance_signed
-                : (sqrt(body_distance2(ev, ctx, integ->t_old, integ->y_old))
+                : (body_distance(ev, ctx, integ->t_old, integ->y_old, 1)
                    - threshold);
             ev->prev_distance_signed = f_end;
             ev->prev_valid = 1;
@@ -413,12 +435,12 @@ int spody_event_check_refined(SpodyEvent *ev,
 
             double t_trigger = integ->t_old + theta_root * integ->h_old;
             spody_dense_state_rv6(integ, t_trigger, cl.y_buf);
-            double d2_trig   = body_distance2(ev, ctx, t_trigger, cl.y_buf);
+            double d_trig    = spody_event_body_distance(ev, ctx, t_trigger, cl.y_buf);
 
             ev->triggered = 1;
             ev->t_trigger = t_trigger;
             for (int i = 0; i < 6; i++) ev->y_trigger[i] = cl.y_buf[i];
-            ev->distance_at_trigger = sqrt(d2_trig);
+            ev->distance_at_trigger = d_trig;
             return 1;
         }
         default:

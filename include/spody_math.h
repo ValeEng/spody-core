@@ -47,6 +47,34 @@ void spody_bf_to_geodetic(const double r_bf_km[3], double a_km,
                             double inv_f, double *lat_rad,
                             double *lon_rad, double *alt_km);
 
+/* Shape of a body for shadow, impact and altitude: a spheroid of
+ * equatorial radius r_eq and polar radius r_pol [km] about the unit
+ * spin axis `pole`, expressed in the frame of the vectors it is used
+ * with (the integration frame, ICRF axes). r_pol <= 0 or r_pol == r_eq
+ * is a sphere of radius r_eq, and every consumer then takes the
+ * spherical path of old, bit for bit. r_eq <= 0: no shape. */
+typedef struct {
+    double r_eq;
+    double r_pol;
+    double pole[3];
+} SpodyBodyShape;
+
+/* Spin axis in ICRF from the IAU WGCCRE linear elements (pck00011
+ * BODYnnn_POLE_RA / _POLE_DEC): RA = ra0 + ra1*T, DEC = dec0 + dec1*T,
+ * degrees and degrees per Julian century, T counted from J2000 TDB
+ * (et in seconds). */
+void spody_iau_pole(double ra0_deg, double ra1_deg, double dec0_deg,
+                    double dec1_deg, double et, double pole[3]);
+
+/* "Distance" of a point from the body centre measured against the
+ * body's shape, so that (result - r_eq) is the altitude above it.
+ *   sphere   : |r_rel| exactly (the spherical code path of old);
+ *   spheroid : r_eq + geodetic altitude above the spheroid (Bowring,
+ *              spody_bf_to_geodetic, in the frame of the pole).
+ * r_rel: satellite relative to the body centre, same frame as pole. */
+double spody_body_shape_distance(const SpodyBodyShape *shape,
+                                 const double r_rel[3]);
+
 #ifdef __cplusplus
 }
 #endif

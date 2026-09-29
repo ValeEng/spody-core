@@ -117,3 +117,30 @@ void spody_cross3(const double a[3], const double b[3], double out[3]) {
     out[1] = a[2] * b[0] - a[0] * b[2];
     out[2] = a[0] * b[1] - a[1] * b[0];
 }
+
+void spody_iau_pole(double ra0_deg, double ra1_deg, double dec0_deg,
+                    double dec1_deg, double et, double pole[3]) {
+    double T   = et / (SECONDSxDAY * DAYS_PER_JULIAN_CY);
+    double ra  = (ra0_deg  + ra1_deg  * T) * DEG2RAD;
+    double dec = (dec0_deg + dec1_deg * T) * DEG2RAD;
+    pole[0] = cos(dec) * cos(ra);
+    pole[1] = cos(dec) * sin(ra);
+    pole[2] = sin(dec);
+}
+
+double spody_body_shape_distance(const SpodyBodyShape *shape,
+                                 const double r_rel[3]) {
+    double d2 = r_rel[0] * r_rel[0] + r_rel[1] * r_rel[1] + r_rel[2] * r_rel[2];
+    if (!(shape->r_pol > 0.0) || shape->r_pol == shape->r_eq) return sqrt(d2);
+
+    /* The spheroid is symmetric about its axis: the point's height
+     * along the pole and its distance from the axis are all
+     * spody_bf_to_geodetic needs. */
+    double z = spody_dot3(r_rel, shape->pole);
+    double r_axis[3] = { sqrt(fmax(0.0, d2 - z * z)), 0.0, z };
+    double alt_km = 0.0;
+    spody_bf_to_geodetic(r_axis, shape->r_eq,
+                         shape->r_eq / (shape->r_eq - shape->r_pol),
+                         NULL, NULL, &alt_km);
+    return shape->r_eq + alt_km;
+}

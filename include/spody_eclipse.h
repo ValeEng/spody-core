@@ -22,6 +22,7 @@ extern "C" {
 
 #include <stdio.h>
 #include "spody_const.h"
+#include "spody_math.h"      /* SpodyBodyShape */
 
 //debug
 #define DEBUG_ECLIPSE 0 // 0 = no debug | 1 = debug |---> CODE TESTING
@@ -60,12 +61,25 @@ extern "C" {
  *
  *     1 - sum_i g_i  <=  lit  <=  min_i (1 - g_i)
  *
+ * Occulting bodies are spheres or oblate spheroids (SpodyBodyShape).
+ * A spheroid enters the disc model with the angular radius of its
+ * limb in the plane (satellite, body centre, Sun): the affine map that
+ * stretches the polar axis by r_eq / r_pol turns it into a sphere and
+ * keeps tangency, so the limb point comes in closed form. The
+ * spheroid lies between its polar and its equatorial sphere, so the
+ * limb is only computed where those two disagree, the seconds around
+ * each contact. The same plane-of-the-Sun construction as Adhya,
+ * Sibthorpe, Ziebart & Cross (J. Spacecraft Rockets 41(1), 2004),
+ * extended here from a lit/shadow state to the lit fraction.
+ *
  * Arguments -- all vectors in one common frame [km]; only relative
- * geometry is used, so which frame it is does not matter:
+ * geometry is used, so which frame it is does not matter as long as
+ * the poles in `occ` are in it too:
  *   sat2sun     satellite -> Sun
  *   sun_radius  km
  *   sat2occ     satellite -> centre of each occulting body, n_occ rows
- *   occ_radius  km, one per row; rows with radius <= 0 are ignored
+ *   occ         shape of each occulter, one per row; rows with
+ *               r_eq <= 0 are ignored
  *   n_occ       number of rows, <= SPODY_ECL_MAX_OCCULTERS
  *
  * The occulter list is whatever the caller decides can cast a shadow;
@@ -73,7 +87,7 @@ extern "C" {
  */
 double spody_get_satlitfraction(const double sat2sun[3], double sun_radius,
                                 const double sat2occ[][3],
-                                const double occ_radius[], int n_occ);
+                                const SpodyBodyShape occ[], int n_occ);
 
 /*
  * Signed predicate of an eclipse event against ONE occulting body:
@@ -97,12 +111,16 @@ double spody_get_satlitfraction(const double sat2sun[3], double sun_radius,
  * c <= b - a), written as signed angles, linear through the root. In
  * between, the fraction crosses the threshold inside the penumbra,
  * where its slope is finite. A satellite inside the body returns -1.
+ * For a spheroid, b is its limb radius, computed at every call (not
+ * only near the contacts as in the force) so the residual stays
+ * continuous.
  *
  * Unlike spody_get_satlitfraction there is no sunward-side screening:
  * there c is near 90 degrees or more and every form is positive.
  */
 double spody_get_eclipse_residual(const double sat2sun[3], double sun_radius,
-                                  const double sat2occ[3], double occ_radius,
+                                  const double sat2occ[3],
+                                  const SpodyBodyShape *occ,
                                   double threshold);
 
 #ifdef __cplusplus

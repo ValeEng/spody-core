@@ -202,10 +202,86 @@ static double triple_overlap_fraction(double a, double b1, double b2,
     return triple_overlap_area(r, O) / (PI * (a * a));
 }
 
+/* Angular radius, seen from the satellite, of a spheroid's limb in the
+ * direction of the Sun: the angle between the satellite -> centre line
+ * and the tangent to the limb that lies in the plane (satellite, body
+ * centre, Sun). The affine map that stretches the polar axis by
+ * r_eq / r_pol turns the spheroid into the sphere of radius r_eq and
+ * keeps planes, straight lines and tangency, so the tangent point is
+ * found on that sphere in closed form and mapped back; the angle is
+ * then measured in true space. Only the plane through the Sun is
+ * searched, so the contact with the Sun's disc is the one in that
+ * plane (the one that decides the timing; off-plane, the limb curvature
+ * over the Sun's 0.27 deg is second order). b_sphere is returned when
+ * the geometry degenerates (Sun on the satellite-centre line). */
+static double spheroid_limb_radius(const SpodyBodyShape *s,
+                                   const double sat2occ[3],
+                                   const double sat2sun[3],
+                                   double b_sphere) {
+    const double *k = s->pole;
+    double stretch = s->r_eq / s->r_pol - 1.0;
+    double P[3], S[3], Pp[3], Sp[3];
+    for (int i = 0; i < 3; ++i) {
+        P[i] = -sat2occ[i];                     /* centre -> satellite */
+        S[i] = sat2sun[i] - sat2occ[i];         /* centre -> Sun       */
+    }
+    double pk = P[0] * k[0] + P[1] * k[1] + P[2] * k[2];
+    double sk = S[0] * k[0] + S[1] * k[1] + S[2] * k[2];
+    for (int i = 0; i < 3; ++i) {
+        Pp[i] = P[i] + stretch * pk * k[i];
+        Sp[i] = S[i] + stretch * sk * k[i];
+    }
+    double dp = sqrt(Pp[0] * Pp[0] + Pp[1] * Pp[1] + Pp[2] * Pp[2]);
+    if (!(dp > s->r_eq)) return b_sphere;
+
+    /* In the mapped plane: e1 towards the satellite, e2 towards the
+     * Sun side. The tangent point from P' on the sphere sits at
+     * cos(alpha) = r_eq / |P'| from e1. */
+    double e1[3] = { Pp[0] / dp, Pp[1] / dp, Pp[2] / dp };
+    double se    = Sp[0] * e1[0] + Sp[1] * e1[1] + Sp[2] * e1[2];
+    double e2[3] = { Sp[0] - se * e1[0], Sp[1] - se * e1[1], Sp[2] - se * e1[2] };
+    double n2    = sqrt(e2[0] * e2[0] + e2[1] * e2[1] + e2[2] * e2[2]);
+    if (!(n2 > 0.0)) return b_sphere;
+    double ca = s->r_eq / dp;
+    double sa = sqrt(fmax(0.0, 1.0 - ca * ca));
+    double L[3];
+    for (int i = 0; i < 3; ++i)
+        L[i] = s->r_eq * (ca * e1[i] + sa * e2[i] / n2);
+
+    /* Back to true space (inverse stretch: factor r_pol / r_eq - 1). */
+    double lk = L[0] * k[0] + L[1] * k[1] + L[2] * k[2];
+    double shrink = s->r_pol / s->r_eq - 1.0;
+    for (int i = 0; i < 3; ++i) L[i] += shrink * lk * k[i];
+
+    double v[3] = { L[0] - P[0], L[1] - P[1], L[2] - P[2] };   /* sat -> limb */
+    double nv = sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+    double np = sqrt(P[0] * P[0] + P[1] * P[1] + P[2] * P[2]);
+    return acos(clamp1(-(v[0] * P[0] + v[1] * P[1] + v[2] * P[2]) / (nv * np)));
+}
+
+/* Angular radius of body `s` for the disc-overlap model. A sphere, or
+ * a spheroid whose limb cannot matter here, keeps the spherical
+ * b = asin(r_eq / d) of old. The spheroid lies between its polar and
+ * its equatorial sphere, so its limb radius does too: if the
+ * equatorial sphere leaves the Sun whole (c >= a + b) or the polar one
+ * already hides it all (c <= b_pol - a), the spheroid gives the same
+ * answer and the limb is not computed. That keeps the cost to the few
+ * seconds around each contact. */
+static double body_angular_radius(const SpodyBodyShape *s,
+                                  const double sat2occ[3],
+                                  const double sat2sun[3],
+                                  double a, double c, double d) {
+    double b = asin(clamp1(s->r_eq / d));
+    if (!(s->r_pol > 0.0) || s->r_pol == s->r_eq) return b;
+    if (c >= a + b) return b;
+    if (c <= asin(clamp1(s->r_pol / d)) - a) return b;
+    return spheroid_limb_radius(s, sat2occ, sat2sun, b);
+}
+
 double spody_get_satlitfraction(const double sat2sun[3], double sun_radius,
                                 const double sat2occ[][3],
-                                const double occ_radius[], int n_occ) {
-    if (!sat2sun || !sat2occ || !occ_radius || n_occ <= 0) return 1.0;
+                                const SpodyBodyShape occ[], int n_occ) {
+    if (!sat2sun || !sat2occ || !occ || n_occ <= 0) return 1.0;
     if (sun_radius <= 0.0) return 1.0;
     if (n_occ > SPODY_ECL_MAX_OCCULTERS) n_occ = SPODY_ECL_MAX_OCCULTERS;
 
@@ -230,7 +306,7 @@ double spody_get_satlitfraction(const double sat2sun[3], double sun_radius,
     int    k = 0;
 
     for (int i = 0; i < n_occ; ++i) {
-        if (occ_radius[i] <= 0.0) continue;
+        if (occ[i].r_eq <= 0.0) continue;
         const double *p = sat2occ[i];
 
         /* Screening: is the satellite on the sunward side of this
@@ -243,15 +319,19 @@ double spody_get_satlitfraction(const double sat2sun[3], double sun_radius,
         if (d2 > dps) continue;
 
         double d = sqrt(d2);
-        if (occ_radius[i] >= d) return 0.0;     /* satellite inside the body */
+        if (occ[i].r_eq >= d) {                 /* inside the equatorial sphere */
+            double r_rel[3] = { -p[0], -p[1], -p[2] };
+            if (spody_body_shape_distance(&occ[i], r_rel) <= occ[i].r_eq)
+                return 0.0;                     /* satellite inside the body */
+        }
 
-        double b_i = asin(clamp1(occ_radius[i] / d));
         double u_i[3];
         u_i[0] = p[0] / d;
         u_i[1] = p[1] / d;
         u_i[2] = p[2] / d;
         double c_i = acos(clamp1((p[0] * usun[0] + p[1] * usun[1]
                                                  + p[2] * usun[2]) / d));
+        double b_i = body_angular_radius(&occ[i], p, sat2sun, a, c_i, d);
         double g_i = disc_overlap_fraction(a, b_i, c_i);
 
         #if DEBUG_ECLIPSE == 1
@@ -305,7 +385,8 @@ double spody_get_satlitfraction(const double sat2sun[3], double sun_radius,
 }
 
 double spody_get_eclipse_residual(const double sat2sun[3], double sun_radius,
-                                  const double sat2occ[3], double occ_radius,
+                                  const double sat2occ[3],
+                                  const SpodyBodyShape *occ,
                                   double threshold) {
     double d_sun = sqrt(sat2sun[0] * sat2sun[0]
                       + sat2sun[1] * sat2sun[1]
@@ -313,13 +394,21 @@ double spody_get_eclipse_residual(const double sat2sun[3], double sun_radius,
     double d     = sqrt(sat2occ[0] * sat2occ[0]
                       + sat2occ[1] * sat2occ[1]
                       + sat2occ[2] * sat2occ[2]);
-    if (!(d_sun > 0.0) || sun_radius <= 0.0 || occ_radius <= 0.0) return 1.0;
-    if (occ_radius >= d) return -1.0;           /* satellite inside the body */
+    if (!(d_sun > 0.0) || sun_radius <= 0.0 || occ->r_eq <= 0.0) return 1.0;
+    if (occ->r_eq >= d) {                       /* inside the equatorial sphere */
+        double r_rel[3] = { -sat2occ[0], -sat2occ[1], -sat2occ[2] };
+        if (spody_body_shape_distance(occ, r_rel) <= occ->r_eq)
+            return -1.0;                        /* satellite inside the body */
+    }
 
     double a = asin(clamp1(sun_radius / d_sun));
-    double b = asin(clamp1(occ_radius / d));
+    double b = asin(clamp1(occ->r_eq / d));
     double c = acos(clamp1((sat2occ[0] * sat2sun[0] + sat2occ[1] * sat2sun[1]
                           + sat2occ[2] * sat2sun[2]) / (d * d_sun)));
+    /* A spheroid's limb always, not only near the contacts as in the
+     * force: the residual must stay continuous for the root finder. */
+    if (occ->r_pol > 0.0 && occ->r_pol != occ->r_eq)
+        b = spheroid_limb_radius(occ, sat2occ, sat2sun, b);
 
     /* The two contacts are straight lines in c: the lit fraction is
      * flat (0 or 1) on one side of them, which gives a root finder

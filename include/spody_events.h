@@ -191,6 +191,18 @@ typedef struct {
     int    has_ref_point;
     double ref_point[3];
 
+    /* Optional spheroid shape of the event's body (every kind): polar
+     * radius [km] and unit spin axis in the integration frame, with
+     * `radius_km` as the equatorial radius. Left at 0 (the
+     * constructors' default) the body is the sphere of `radius_km`,
+     * exactly as before. Set, IMPACT and ALT_CROSSING measure the
+     * geodetic altitude above the spheroid and ECLIPSE uses its limb:
+     * everything written as "|r_sat - r_body|" in the kind notes above
+     * then reads "radius_km + altitude above the spheroid"
+     * (spody_event_body_distance). */
+    double polar_radius_km;
+    double pole[3];
+
     /* ---- runtime-set (output) ---- */
     int    triggered;               /* 1 if the predicate has ever fired        */
     double t_trigger;               /* sim time of the (last) trigger           */
@@ -296,6 +308,17 @@ int spody_event_check(SpodyEvent *ev,
 int spody_event_check_refined(SpodyEvent *ev,
                               const ForceModelContext *ctx,
                               const IntegratorAllData *integ);
+
+/* Distance of state (t, y) from the event's body measured against the
+ * body's shape: |r_sat - r_body| for a sphere (bit for bit what the
+ * IMPACT / ALT_CROSSING predicates always used), radius_km + geodetic
+ * altitude for a spheroid. What IMPACT and ALT_CROSSING compare and
+ * what they log as distance_at_trigger; the drive loop uses it for the
+ * INITIAL_STATE / FINAL_STATE markers so that `distance_km -
+ * radius_km` is the altitude in every record. */
+double spody_event_body_distance(const SpodyEvent *ev,
+                                 const ForceModelContext *ctx,
+                                 double t, const double *y);
 
 /* On-disk record for an events log: one record per trigger, written
  * verbatim (the SpOdy app's SPDYEVT_ files). 80 bytes total, no
