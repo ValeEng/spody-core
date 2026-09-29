@@ -182,6 +182,16 @@ typedef struct {
     double dc20_perm;
 } SpodySolidTides;
 
+/* General relativity, Schwarzschild term of the central body (IERS
+ * Conventions 2010 eq. 10.12, first line):
+ *   a = GM/(c^2 r^3) [ (2(beta+gamma) GM/r - gamma v.v) r
+ *                      + 2(1+gamma) (r.v) v ]
+ * r, v relative to the central body (ICRF, km, km/s), GM = mu_central.
+ * The Lense-Thirring and de Sitter lines of the same equation are not
+ * modelled (1e-11..1e-12 of gravity, IERS). */
+void spody_force_relativity(double mu, const double r[3], const double v[3],
+                            double acc[3]);
+
 /* Acceleration (ICRF, km/s^2) of the solid tide at `et` for a
  * satellite at `r` (ICRF, central-body centred). Requires ctx->tides,
  * ctx->eph and ctx->get_bf_rotation. */
@@ -210,6 +220,9 @@ struct ForceModelContext {
 
     /* solid-body tide of the central body (NULL = disabled) */
     const SpodySolidTides *tides;
+
+    /* general relativity, Schwarzschild term of the central body */
+    int     enable_relativity;
 
     /* ephemeris-driven perturbations (NULL = disabled). Must be
      * non-NULL whenever hg, n_third > 0, or enable_srp are active.
@@ -517,8 +530,8 @@ void spody_inertial_to_cr3bp_synodic(
  *
  * Bit-equivalence: acc_total reproduces the result of rhs_default at
  * the same (t, y), with the same summation order
- * (SRP, drag, each third body in turn, harmonics, solid tide, then
- * 2body).
+ * (SRP, drag, each third body in turn, harmonics, solid tide,
+ * relativity, then 2body).
  *
  * The whole struct is written as one record into the breakdown binary
  * log -- including n_third and the per-body array. Internal padding
@@ -540,6 +553,9 @@ typedef struct {
     double eclipse_fraction;                           /* 1=full sun, 0=full umbra */
     double acc_solidtides[3];                          /* solid-body tide (appended:
                                                         * SPDYACC_ v2) */
+    double acc_relativity[3];                          /* general relativity,
+                                                        * Schwarzschild (appended:
+                                                        * SPDYACC_ v3) */
 } ForceBreakdown;
 
 /* Re-evaluate the force decomposition on the given (t, y) and write the

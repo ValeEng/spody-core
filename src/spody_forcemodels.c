@@ -259,6 +259,22 @@ void spody_force_solidtides(const ForceModelContext *ctx, double et,
 }
 
 /* ============================================================
+ * Atomic force: general relativity (IERS 2010 eq. 10.12, line 1)
+ * ============================================================ */
+void spody_force_relativity(double mu, const double r[3], const double v[3],
+                            double acc[3]) {
+    double r2 = r[0]*r[0] + r[1]*r[1] + r[2]*r[2];
+    double rn = sqrt(r2);
+    double v2 = v[0]*v[0] + v[1]*v[1] + v[2]*v[2];
+    double rv = r[0]*v[0] + r[1]*v[1] + r[2]*v[2];
+    double k  = mu / (SPEED_OF_LIGHT_KMS * SPEED_OF_LIGHT_KMS * r2 * rn);
+    double cr = 2.0 * (PPN_BETA + PPN_GAMMA) * mu / rn - PPN_GAMMA * v2;
+    double cv = 2.0 * (1.0 + PPN_GAMMA) * rv;
+    for (int i = 0; i < 3; ++i)
+        acc[i] = k * (cr * r[i] + cv * v[i]);
+}
+
+/* ============================================================
  * Atomic force: third body (Cowell)
  * ============================================================ */
 void spody_force_thirdbody_cowell(double mu_3, const double r_3[3],
@@ -516,6 +532,14 @@ int spody_force_rhs_default(double t, const double *y, double *dy, void *user) {
         acc_pert[2] += acc_tmp[2];
     }
 
+    /* ---- 4c. general relativity (Schwarzschild) --------------- */
+    if (ctx->enable_relativity) {
+        spody_force_relativity(ctx->mu_central, r, v, acc_tmp);
+        acc_pert[0] += acc_tmp[0];
+        acc_pert[1] += acc_tmp[1];
+        acc_pert[2] += acc_tmp[2];
+    }
+
     /* ---- 5. central two-body (largest term, summed last) ------ */
     double acc_2body[3];
     spody_force_twobody(ctx->mu_central, r, acc_2body);
@@ -679,6 +703,11 @@ void spody_force_breakdown(const ForceModelContext *ctx,
         spody_force_solidtides(ctx, et, r, bd->acc_solidtides);
     }
 
+    /* general relativity (Schwarzschild) */
+    if (ctx->enable_relativity) {
+        spody_force_relativity(ctx->mu_central, r, v, bd->acc_relativity);
+    }
+
     /* third bodies (per-body + total) */
     if (ctx->n_third > 0 && ctx->eph) {
         int n = ctx->n_third;
@@ -718,8 +747,8 @@ void spody_force_breakdown(const ForceModelContext *ctx,
 
     /* total: accumulated exactly as rhs_default does -- a perturbation
      * sum starting from zero that takes SRP, drag, each third body in
-     * turn, the harmonics and the solid tide, then the two-body term
-     * last. Adding the
+     * turn, the harmonics, the solid tide and relativity, then the
+     * two-body term last. Adding the
      * pre-summed acc_thirdbody_total instead regroups the third bodies
      * and, with two or more of them next to a non-zero SRP, rounds
      * differently from the RHS. A disabled force is exactly zero here,
@@ -733,6 +762,8 @@ void spody_force_breakdown(const ForceModelContext *ctx,
         acc_pert += bd->acc_sphericalharmonics[k];
         if (ctx->tides && ctx->eph)
             acc_pert += bd->acc_solidtides[k];
+        if (ctx->enable_relativity)
+            acc_pert += bd->acc_relativity[k];
         bd->acc_total[k] = acc_pert + bd->acc_2body[k];
     }
 }

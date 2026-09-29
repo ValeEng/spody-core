@@ -177,6 +177,13 @@ extern "C" {
     // rotating-frame state and a converted one agree to the bit.
 #define EARTH_NAIF 399
 
+    // General relativity, Schwarzschild term of the central body (IERS
+    // Conventions 2010 sec. 10.3, eq. 10.12, first line). The PPN
+    // parameters are 1 in general relativity.
+#define SPEED_OF_LIGHT_KMS  299792.458      // km/s, exact (SI definition)
+#define PPN_BETA            1.0
+#define PPN_GAMMA           1.0
+
     // NAIF id of the Moon: a tide-raising body for the Earth, and the
     // central body whose own tide the Earth raises.
 #define MOON_NAIF 301
