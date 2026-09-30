@@ -324,6 +324,17 @@ struct ForceModelContext {
      * et0 = 0 corresponds to the J2000 epoch itself. */
     double  et0;
 
+    /* Integration time scale. 0 (default): the integrator's t is TDB
+     * seconds past et0, et = et0 + t, as above. 1: t is TT seconds past
+     * the same instant, tt = tt0 + t with tt0 = et0 - (TDB-TT)(et0), and
+     * et comes through spody_ctx_et -- the time coordinate IERS 2010
+     * (TN36 sec. 10.3) prescribes for geocentric satellite equations of
+     * motion. Every consumer of absolute time goes through spody_ctx_et;
+     * every time written to a file goes through spody_ctx_label, so the
+     * files keep "ET - et0" in both modes. */
+    int     time_scale_tt;
+    double  tt0;
+
     /* ---- CR3BP fields ----
      * Used only when the RHS is `spody_force_rhs_cr3bp`. Zero (or
      * uninitialised) in high-fidelity runs -- the HF RHS never reads
@@ -429,6 +440,24 @@ void spody_force_drag(const ForceModelContext *ctx, double et,
  * minimise round-off accumulation in long propagations.
  */
 int spody_force_rhs_default(double t, const double *y, double *dy, void *user);
+
+/* Time of the integrator (see ctx->time_scale_tt) as ET, the argument
+ * of every ephemeris, rotation and space-weather query. TDB mode:
+ * et0 + t, unchanged. TT mode: tt = tt0 + t, et = tt + (TDB-TT)(tt):
+ * the periodic term is evaluated at tt instead of et, 1.7 ms away, and
+ * moves by at most 3.3e-10 s per second, so et is off by < 6e-13 s
+ * (5 nm on a LEO) -- one deltet per RHS call instead of two. */
+double spody_ctx_et(const ForceModelContext *ctx, double t);
+
+/* The integrator's t as written to files: ET - et0, so a file means
+ * the same thing whatever the integration time scale. TDB mode returns
+ * t itself (bit for bit). */
+double spody_ctx_label(const ForceModelContext *ctx, double t);
+
+/* Inverse of spody_ctx_label: the integrator's t at file time `label`
+ * (ET - et0). TDB mode returns `label` itself. Used to put the output
+ * grid, and the end of the run, on round ET labels. */
+double spody_ctx_t_of_label(const ForceModelContext *ctx, double label);
 
 /* Retunes the harmonics truncation degree for the coming step.
  *

@@ -128,7 +128,7 @@ static double body_distance(const SpodyEvent *ev,
     } else if (ev->naif_id != ctx->naif_central) {
         double body_pos[3] = {0.0, 0.0, 0.0};
         if (ctx->eph) {
-            double et = ctx->et0 + t;
+            double et = spody_ctx_et(ctx, t);
             spody_get_ephposition(ctx->eph, ctx->naif_central, ev->naif_id, et, body_pos);
         }
         for (int i = 0; i < 3; i++) r_rel[i] = y[i] - body_pos[i];
@@ -166,7 +166,7 @@ static int eclipse_vectors(const SpodyEvent *ev,
                            double sat2sun[3], double sat2occ[1][3])
 {
     if (!ctx->eph) return 0;
-    double et = ctx->et0 + t;
+    double et = spody_ctx_et(ctx, t);
 
     double occ_pos_central[3] = { 0.0, 0.0, 0.0 };
     if (ev->naif_id != ctx->naif_central) {

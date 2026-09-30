@@ -17,6 +17,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "spody_forcemodels.h"
+#include "spody_time.h"          /* spody_tdb_minus_tt */
 
 /* ============================================================
  * Spacecraft init
@@ -551,12 +552,29 @@ int spody_adapt_hgdegree(double t, const double *y, double h, void *user) {
     return ctx->hg->N_eval != n_before;
 }
 
+double spody_ctx_et(const ForceModelContext *ctx, double t) {
+    if (!ctx->time_scale_tt) return ctx->et0 + t;
+    double tt = ctx->tt0 + t;
+    return tt + spody_tdb_minus_tt(tt);
+}
+
+double spody_ctx_label(const ForceModelContext *ctx, double t) {
+    if (!ctx->time_scale_tt) return t;
+    return spody_ctx_et(ctx, t) - ctx->et0;
+}
+
+double spody_ctx_t_of_label(const ForceModelContext *ctx, double label) {
+    if (!ctx->time_scale_tt) return label;
+    double et = ctx->et0 + label;
+    return (et - spody_tdb_minus_tt(et)) - ctx->tt0;
+}
+
 int spody_force_rhs_default(double t, const double *y, double *dy, void *user) {
     ForceModelContext *ctx = (ForceModelContext*)user;
     const double *r = y;
     const double *v = y + 3;
 
-    double et = ctx->et0 + t;
+    double et = spody_ctx_et(ctx, t);
 
     /* perturbation accumulator (not the 2-body) */
     double acc_pert[3] = { 0.0, 0.0, 0.0 };
@@ -776,11 +794,11 @@ void spody_force_breakdown(const ForceModelContext *ctx,
     const double *r = y;
     const double *v = y + 3;
 
-    double et = ctx->et0 + t;
+    double et = spody_ctx_et(ctx, t);
 
     /* zero everything (covers also the unused part of acc_thirdbody[]) */
     memset(bd, 0, sizeof(*bd));
-    bd->t  = t;
+    bd->t  = spody_ctx_label(ctx, t);   /* file time: ET - et0 */
     bd->eclipse_fraction = 1.0;
 
     /* central two-body */
