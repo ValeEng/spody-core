@@ -26,6 +26,11 @@ static const uint64_t philox_w0 = 0x9E3779B97F4A7C15ULL;
 static const uint64_t philox_w1 = 0xBB67AE8584CAA73BULL;
 enum { PHILOX_ROUNDS = 10 };
 
+/* 64-bit FNV-1a (Fowler, Noll, Vo): offset basis and prime, for the
+ * substream id of a named quantity. */
+static const uint64_t fnv1a64_offset = 0xCBF29CE484222325ULL;
+static const uint64_t fnv1a64_prime  = 0x00000100000001B3ULL;
+
 /* Step of the open uniform grid (k + 1/2) * 2^-52, see
  * spody_random_u64_to_open01. */
 static const double two_pow_m52 = 2.220446049250313080847263336181640625e-16;
@@ -93,9 +98,9 @@ void spody_philox4x64(const uint64_t ctr[4], const uint64_t key[2],
 }
 
 void spody_random_stream_init(SpodyRandomStream *s, uint64_t seed,
-                              uint64_t id)
+                              uint64_t id, uint64_t sub)
 {
-    s->key[0] = seed; s->key[1] = 0;
+    s->key[0] = seed; s->key[1] = sub;
     s->ctr[0] = 0;    s->ctr[1] = id; s->ctr[2] = 0; s->ctr[3] = 0;
     s->block[0] = s->block[1] = s->block[2] = s->block[3] = 0;
     s->next = 4;
@@ -109,6 +114,16 @@ uint64_t spody_random_next_u64(SpodyRandomStream *s)
         s->next = 0;
     }
     return s->block[s->next++];
+}
+
+uint64_t spody_random_substream_id(const char *name)
+{
+    uint64_t h = fnv1a64_offset;
+    for (const unsigned char *p = (const unsigned char *)name; *p; ++p) {
+        h ^= *p;
+        h *= fnv1a64_prime;
+    }
+    return h;
 }
 
 double spody_random_u64_to_open01(uint64_t x)

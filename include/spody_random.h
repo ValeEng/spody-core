@@ -35,13 +35,21 @@ extern "C" {
  * philox4x64_10; this implementation is written from the paper and
  * checked against the Random123 known-answer vectors.
  *
- * Stream convention (one stream per Monte Carlo case):
+ * Stream convention (one stream per Monte Carlo case and per
+ * dispersed quantity):
  *
- *     word k of stream (seed, id) = Philox(ctr = {k / 4, id, 0, 0},
- *                                          key = {seed, 0})[k % 4]
+ *     word k of stream (seed, id, sub) = Philox(ctr = {k / 4, id, 0, 0},
+ *                                               key = {seed, sub})[k % 4]
  *
  * so case `id` draws the same numbers whatever the number of cases,
- * the thread count or the order the cases run in.
+ * the thread count or the order the cases run in, and each dispersed
+ * quantity reads its own substream `sub`: adding, removing or
+ * reordering one quantity never changes the draws of the others
+ * (common random numbers between two configurations). Substream 0 is
+ * the initial state; a parameter takes spody_random_substream_id of
+ * its name. Two quantities of one run must NEVER share a substream
+ * (they would draw identical numbers): callers check it, and any new
+ * kind of dispersed quantity needs an id no other can take.
  *
  * Normal deviates: the inverse of the standard normal CDF applied to
  * one uniform (AS241, see spody_normal_quantile). One uniform gives
@@ -65,9 +73,17 @@ typedef struct {
     int      next;       /* next unused word of block; 4 = refill first */
 } SpodyRandomStream;
 
-/* Position `s` at word 0 of stream (seed, id). */
+/* Position `s` at word 0 of stream (seed, id, sub). */
 void spody_random_stream_init(SpodyRandomStream *s, uint64_t seed,
-                              uint64_t id);
+                              uint64_t id, uint64_t sub);
+
+/* Substream id of a named quantity: the 64-bit FNV-1a hash
+ * (Fowler-Noll-Vo) of the NUL-terminated `name`, e.g. the batch
+ * target path "spacecraft.drag.Cd". Stable across versions as long as
+ * the name is. Not collision-free by construction: the caller rejects
+ * a run where two quantities (or a quantity and the reserved 0) get
+ * the same id. */
+uint64_t spody_random_substream_id(const char *name);
 
 /* Next 64-bit word of the stream. */
 uint64_t spody_random_next_u64(SpodyRandomStream *s);
