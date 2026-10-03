@@ -167,6 +167,7 @@ set(SOURCES
     src/spody_math.c
     src/spody_nrlmsise00.c
     src/spody_oem.c
+    src/spody_random.c
     src/spody_gp.c
     src/spody_glonass.c
     src/spody_gps.c
