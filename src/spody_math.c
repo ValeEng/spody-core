@@ -15,6 +15,7 @@
  */
 #include "spody_math.h"
 #include <math.h>
+#include <stdlib.h>
 #include "spody_const.h"   /* PI */
 
 void spody_transpose_matrix(double in[3][3], double out[3][3]) {
@@ -143,4 +144,127 @@ double spody_body_shape_distance(const SpodyBodyShape *shape,
                          shape->r_eq / (shape->r_eq - shape->r_pol),
                          NULL, NULL, &alt_km);
     return shape->r_eq + alt_km;
+}
+
+/* Degeneracy thresholds of the RIC axes (copied verbatim by the
+ * Python twin spopy.rotations.ric_to_icrf). */
+static const double ric_min_r_km = 1.0e-9;
+static const double ric_min_h    = 1.0e-12;
+
+int spody_getrotmatrix_ric2icrf(const double r[3], const double v[3],
+                                double R[3][3]) {
+    double rn = sqrt(spody_dot3(r, r));
+    if (rn < ric_min_r_km) return -1;
+    double h[3];
+    spody_cross3(r, v, h);
+    double hn = sqrt(spody_dot3(h, h));
+    if (hn < ric_min_h) return -1;
+    double rh[3] = { r[0] / rn, r[1] / rn, r[2] / rn };
+    double ch[3] = { h[0] / hn, h[1] / hn, h[2] / hn };
+    double ih[3];
+    spody_cross3(ch, rh, ih);
+    for (int k = 0; k < 3; ++k) {
+        R[k][0] = rh[k];
+        R[k][1] = ih[k];
+        R[k][2] = ch[k];
+    }
+    return 0;
+}
+
+int spody_getrotmatrix_icrf2ric(const double r[3], const double v[3],
+                                double R[3][3]) {
+    double Rt[3][3];
+    if (spody_getrotmatrix_ric2icrf(r, v, Rt) != 0) return -1;
+    spody_transpose_matrix(Rt, R);
+    return 0;
+}
+
+int spody_symmat_cholesky(int n, const double *a, double *l) {
+    for (int i = 0; i < n * n; ++i) l[i] = 0.0;
+    for (int j = 0; j < n; ++j) {
+        double d = a[j * n + j];
+        for (int k = 0; k < j; ++k) d -= l[j * n + k] * l[j * n + k];
+        if (!(d > 0.0)) return j + 1;          /* also catches NaN */
+        double ljj = sqrt(d);
+        l[j * n + j] = ljj;
+        for (int i = j + 1; i < n; ++i) {
+            double s = a[i * n + j];
+            for (int k = 0; k < j; ++k) s -= l[i * n + k] * l[j * n + k];
+            l[i * n + j] = s / ljj;
+        }
+    }
+    return 0;
+}
+
+/* Cyclic Jacobi: each rotation in the (p, q) plane zeroes a[p][q]
+ * (Golub & Van Loan, Matrix Computations, 4th ed., algorithms 8.5.1 and
+ * 8.5.3). The angle uses the smaller root t of t^2 + 2 theta t - 1 = 0,
+ * theta = (a_qq - a_pp) / (2 a_pq), which keeps |rotation| <= pi/4. */
+int spody_symmat_eigen_jacobi(int n, const double *a, double *w, double *v) {
+    double *m = (double *)malloc((size_t)n * (size_t)n * sizeof(double));
+    double *e = v ? v : (double *)malloc((size_t)n * (size_t)n * sizeof(double));
+    if (!m || !e) {
+        free(m);
+        if (!v) free(e);
+        return -2;
+    }
+    for (int i = 0; i < n; ++i)               /* symmetric copy of the lower triangle */
+        for (int j = 0; j <= i; ++j)
+            m[i * n + j] = m[j * n + i] = a[i * n + j];
+    for (int i = 0; i < n * n; ++i) e[i] = 0.0;
+    for (int i = 0; i < n; ++i) e[i * n + i] = 1.0;
+
+    int rc = -1;
+    for (int sweep = 0; sweep < 100; ++sweep) {
+        double off = 0.0;
+        for (int p = 0; p < n; ++p)
+            for (int q = p + 1; q < n; ++q) off += fabs(m[p * n + q]);
+        if (off == 0.0) { rc = 0; break; }
+        for (int p = 0; p < n; ++p) {
+            for (int q = p + 1; q < n; ++q) {
+                double apq = m[p * n + q];
+                double g = 100.0 * fabs(apq);
+                double app = m[p * n + p], aqq = m[q * n + q];
+                if (sweep > 3 && fabs(app) + g == fabs(app)
+                              && fabs(aqq) + g == fabs(aqq)) {
+                    m[p * n + q] = m[q * n + p] = 0.0;
+                    continue;
+                }
+                if (apq == 0.0) continue;
+                double theta = (aqq - app) / (2.0 * apq);
+                double t = 1.0 / (fabs(theta) + sqrt(1.0 + theta * theta));
+                if (theta < 0.0) t = -t;
+                double c = 1.0 / sqrt(1.0 + t * t), s = t * c;
+                for (int k = 0; k < n; ++k) {  /* columns p, q of m and e */
+                    double mkp = m[k * n + p], mkq = m[k * n + q];
+                    m[k * n + p] = c * mkp - s * mkq;
+                    m[k * n + q] = s * mkp + c * mkq;
+                    double ekp = e[k * n + p], ekq = e[k * n + q];
+                    e[k * n + p] = c * ekp - s * ekq;
+                    e[k * n + q] = s * ekp + c * ekq;
+                }
+                for (int k = 0; k < n; ++k) {  /* rows p, q of m */
+                    double mpk = m[p * n + k], mqk = m[q * n + k];
+                    m[p * n + k] = c * mpk - s * mqk;
+                    m[q * n + k] = s * mpk + c * mqk;
+                }
+                m[p * n + q] = m[q * n + p] = 0.0;
+            }
+        }
+    }
+
+    for (int i = 0; i < n; ++i) w[i] = m[i * n + i];
+    for (int i = 1; i < n; ++i) {             /* insertion sort, ascending */
+        for (int j = i; j > 0 && w[j - 1] > w[j]; --j) {
+            double tw = w[j]; w[j] = w[j - 1]; w[j - 1] = tw;
+            for (int k = 0; k < n; ++k) {
+                double te = e[k * n + j];
+                e[k * n + j] = e[k * n + j - 1];
+                e[k * n + j - 1] = te;
+            }
+        }
+    }
+    free(m);
+    if (!v) free(e);
+    return rc;
 }

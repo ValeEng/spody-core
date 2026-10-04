@@ -75,6 +75,37 @@ void spody_iau_pole(double ra0_deg, double ra1_deg, double dec0_deg,
 double spody_body_shape_distance(const SpodyBodyShape *shape,
                                  const double r_rel[3]);
 
+/* Rotation between RIC (radial, in-track, cross-track) and ICRF for a
+ * reference state (r, v), central-inertial ICRF:
+ *     r_hat = r/|r|,  c_hat = (r x v)/|r x v|,  i_hat = c_hat x r_hat.
+ * ric2icrf: R has columns (r_hat, i_hat, c_hat), x_ICRF = R x_RIC;
+ * icrf2ric: its transpose, x_RIC = R x_ICRF. Rotation only, no
+ * omega x r (the RTN convention of CCSDS covariances). Returns 0, or -1
+ * when |r| < 1e-9 km or |r x v| < 1e-12 (axes undefined; R is then left
+ * untouched). Python twin: spopy.rotations.ric_to_icrf / icrf_to_ric. */
+int spody_getrotmatrix_ric2icrf(const double r[3], const double v[3],
+                                double R[3][3]);
+int spody_getrotmatrix_icrf2ric(const double r[3], const double v[3],
+                                double R[3][3]);
+
+/* Cholesky factor of a symmetric positive-definite n x n matrix,
+ * row-major (a[i*n + j]): lower-triangular l with a = l l^T, zeros
+ * above the diagonal. Only the lower triangle of a is read. Returns 0,
+ * or k + 1 when the pivot of row k is not > 0 (the leading
+ * (k+1) x (k+1) block is not positive definite); l is then partial. */
+int spody_symmat_cholesky(int n, const double *a, double *l);
+
+/* Eigen-decomposition of a symmetric n x n matrix, row-major, by cyclic
+ * Jacobi rotations (Golub & Van Loan, Matrix Computations, 4th ed.,
+ * sec. 8.5): eigenvalues w[0..n-1] in ascending order and, when v is
+ * not NULL, the matching unit eigenvectors as the COLUMNS of v
+ * (row-major n x n). Only the lower triangle of a is read. An
+ * off-diagonal element is dropped once adding it to both diagonal
+ * elements it couples no longer changes them (the Rutishauser test).
+ * Returns 0, -1 if the matrix is not diagonal to working precision
+ * after 100 sweeps, -2 on allocation failure. */
+int spody_symmat_eigen_jacobi(int n, const double *a, double *w, double *v);
+
 #ifdef __cplusplus
 }
 #endif
