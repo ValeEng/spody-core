@@ -521,6 +521,19 @@ double spody_ctx_t_of_label(const ForceModelContext *ctx, double label);
  * for coefficients that were not loaded. */
 int spody_adapt_hgdegree(double t, const double *y, double h, void *user);
 
+/* Integrator time of the next known discontinuity of the force model
+ * strictly after t, or INFINITY when the model has none.
+ *
+ * The NRLMSISE-00 inputs are piecewise constant in UTC: the 3-hour Ap
+ * bins, the daily F10.7 and the day of year all change on the 3-hour
+ * UTC grid (00, 03, ..., 21 h), so with drag on and space weather
+ * loaded that grid is returned. A Runge-Kutta step across a jump in
+ * f loses its order (Hairer, Norsett, Wanner, "Solving Ordinary
+ * Differential Equations I", 2nd ed., Springer, 1993, Sect. II.6);
+ * the stepping loop stops on it instead. Decided once per step, like
+ * spody_adapt_hgdegree. */
+double spody_next_force_discontinuity(const ForceModelContext *ctx, double t);
+
 /* CR3BP RHS in the synodic rotating frame, dimensional units.
  *
  * Reads ONLY the cr3bp_* fields of the context (all HF fields may be

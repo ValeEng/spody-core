@@ -552,6 +552,22 @@ int spody_adapt_hgdegree(double t, const double *y, double h, void *user) {
     return ctx->hg->N_eval != n_before;
 }
 
+double spody_next_force_discontinuity(const ForceModelContext *ctx, double t) {
+    if (!ctx || !ctx->enable_drag || !ctx->space_weather) return INFINITY;
+
+    /* next 3-hour UTC boundary after t */
+    double et    = spody_ctx_et(ctx, t);
+    double mjd   = spody_et_to_mjd_utc(et);
+    double mjd_b = (floor(mjd * 8.0) + 1.0) / 8.0;
+
+    /* UTC MJD -> ET: linear guess, then one correction through the
+     * same ET -> UTC chain (absorbs a leap second inside the bin) */
+    double et_b = et + (mjd_b - mjd) * 86400.0;
+    et_b += (mjd_b - spody_et_to_mjd_utc(et_b)) * 86400.0;
+
+    return spody_ctx_t_of_label(ctx, et_b - ctx->et0);
+}
+
 double spody_ctx_et(const ForceModelContext *ctx, double t) {
     if (!ctx->time_scale_tt) return ctx->et0 + t;
     double tt = ctx->tt0 + t;
