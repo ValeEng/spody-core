@@ -286,10 +286,10 @@ int spody_event_check_refined(SpodyEvent *ev,
 {
     if (!ev || !ctx || !integ) return 0;
 
-    /* dense output is only available for RK45 today -- everything else
-     * falls back to the coarse check (which also handles the per-kind
-     * latch). */
-    if (integ->method != SPODY_INTEG_RK45) {
+    /* dense output (spody_dense_state_rv6) is available for the FSAL
+     * methods RK45 and DOP853 -- everything else falls back to the
+     * coarse check (which also handles the per-kind latch). */
+    if (integ->method != SPODY_INTEG_RK45 && integ->method != SPODY_INTEG_DOP853) {
         return spody_event_check(ev, ctx, integ->t, integ->y);
     }
 
