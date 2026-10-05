@@ -27,6 +27,21 @@ extern "C" {
 
 #define SPODY_INTEG_DEFAULT_DIM 6 // default state size: position(3) + velocity(3)
 
+/* Marks a public function kept only for compatibility: a caller gets a
+ * compiler warning. Define SPODY_ALLOW_DEPRECATED before the include to
+ * silence it. */
+#ifndef SPODY_DEPRECATED
+#  if defined(SPODY_ALLOW_DEPRECATED)
+#    define SPODY_DEPRECATED(msg)
+#  elif defined(_MSC_VER)
+#    define SPODY_DEPRECATED(msg) __declspec(deprecated(msg))
+#  elif defined(__GNUC__) || defined(__clang__)
+#    define SPODY_DEPRECATED(msg) __attribute__((deprecated(msg)))
+#  else
+#    define SPODY_DEPRECATED(msg)
+#  endif
+#endif
+
 /* Return codes for the integrator step / drive functions. */
 #define SPODY_INTEG_OK              0
 #define SPODY_INTEG_ERR_NULL       -1
@@ -239,32 +254,16 @@ int spody_propagate_untilend(IntegratorAllData *integ, double t_end);
 /* ============================================================
  * Dense output (continuous interpolation inside the last accepted step)
  *
- * After spody_propagate_onestep returns SPODY_INTEG_OK, this function
- * can be called any number of times to evaluate the state at any point
- * within the just-completed interval [t_old, t_old + h_old]:
+ * DEPRECATED (2026-10-05): not used by the engine -- the output grid,
+ * the events and the discontinuity stops use spody_dense_state_rv6.
+ * The name is reserved for a future dense output independent of the
+ * method (state at any t inside the last step, for every integrator).
  *
- *     y(theta) = y(t_old + theta * h_old),    theta in [0, 1]
- *
- * Implementation (SPODY_INTEG_RK45):
- *   Cubic Hermite C^1 using the FSAL endpoint derivatives k_1 and k_7
- *   (which already sit in integ->k pre-multiplied by h_old). This is
- *   integrator-consistent for the 7S Butcher tableau we run, so a
- *   downstream root-finder sees a curve that actually corresponds to
- *   the integrated trajectory. For (r, v) states -- the event
- *   localisation and the fixed output grid -- spody_dense_state_rv6
- *   below is the one to use: quintic, it keeps the velocity at the
- *   integrator's accuracy.
- *   See the file-level comment in spody_integrators.c for why we use
- *   Hermite here instead of the classical DOPRI5 P-matrix.
- *
- *   The interpolation error is O(h^4), one order below the integrator
- *   itself, and on the velocity one order lower still: that is why the
- *   engine's own grid and events use spody_dense_state_rv6.
- *
- * RK4 and DOP853 return SPODY_INTEG_ERR_NULL (k_7 is RK45's FSAL
- * stage; DOP853 goes through spody_dense_state_rv6).
- *
- * `theta` is clamped to [0, 1] internally. */
+ * After spody_propagate_onestep returns SPODY_INTEG_OK, evaluates
+ *     y(theta) = y(t_old + theta * h_old),    theta in [0, 1] (clamped)
+ * by cubic Hermite on (y_old, k_1, y, k_7) of the RK45 step. RK4 and
+ * DOP853 return SPODY_INTEG_ERR_NULL. */
+SPODY_DEPRECATED("unused; see spody_dense_state_rv6")
 int spody_dense_eval(const IntegratorAllData *integ, double theta, double *y_out);
 
 /* Dense output for a second-order system in (r, v) layout -- dim 6,
@@ -276,8 +275,8 @@ int spody_dense_eval(const IntegratorAllData *integ, double theta, double *y_out
  * nothing: they are the FSAL derivatives the step already holds,
  * unscaled by h -- after the step f(t_old, y_old) and f(t, y) --, so
  * no RHS evaluation is added and no k/h division rounds them. Position
- * and velocity keep the integrator's own accuracy, where the cubic of
- * spody_dense_eval loses an order on the velocity.
+ * and velocity keep the integrator's own accuracy, where a cubic on
+ * (r, v) alone loses an order on the velocity.
  *
  * Valid right after spody_propagate_onestep returns SPODY_INTEG_OK and
  * until the next step or state reset. RK45 and DOP853; returns
