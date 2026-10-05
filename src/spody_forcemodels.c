@@ -17,6 +17,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "spody_forcemodels.h"
+#include "spody_solver.h"
 #include "spody_time.h"          /* spody_tdb_minus_tt */
 
 /* ============================================================
@@ -552,10 +553,12 @@ int spody_adapt_hgdegree(double t, const double *y, double h, void *user) {
     return ctx->hg->N_eval != n_before;
 }
 
-double spody_next_force_discontinuity(const ForceModelContext *ctx, double t) {
-    if (!ctx || !ctx->enable_drag || !ctx->space_weather) return INFINITY;
+/* ---- discontinuity stops ---------------------------------------------- */
 
-    /* next 3-hour UTC boundary after t */
+#define DISC_GRAZE_SAMPLES 16   /* interior dense samples of a step near the shadow */
+
+/* next 3-hour UTC boundary after t (NRLMSISE-00 inputs) */
+static double next_space_weather_bin(const ForceModelContext *ctx, double t) {
     double et    = spody_ctx_et(ctx, t);
     double mjd   = spody_et_to_mjd_utc(et);
     double mjd_b = (floor(mjd * 8.0) + 1.0) / 8.0;
@@ -566,6 +569,111 @@ double spody_next_force_discontinuity(const ForceModelContext *ctx, double t) {
     et_b += (mjd_b - spody_et_to_mjd_utc(et_b)) * 86400.0;
 
     return spody_ctx_t_of_label(ctx, et_b - ctx->et0);
+}
+
+typedef struct {
+    const ForceModelContext *ctx;
+    const IntegratorAllData *integ;
+    int    occ;          /* index into srp_occulter_* */
+    double threshold;    /* 1: penumbra contact, 0: umbra contact */
+} ContactArgs;
+
+static double contact_residual(const ForceModelContext *ctx, int i,
+                               double threshold, double t, const double y[6]) {
+    double et = spody_ctx_et(ctx, t);
+    double sun[3], occ[3] = { 0.0, 0.0, 0.0 }, sat2sun[3], sat2occ[3];
+    spody_get_ephposition(ctx->eph, ctx->naif_central, SUN_NAIF, et, sun);
+    if (ctx->srp_occulter_naif[i] != ctx->naif_central)
+        spody_get_ephposition(ctx->eph, ctx->naif_central,
+                              ctx->srp_occulter_naif[i], et, occ);
+    for (int k = 0; k < 3; k++) {
+        sat2sun[k] = sun[k] - y[k];
+        sat2occ[k] = occ[k] - y[k];
+    }
+    return spody_get_eclipse_residual(sat2sun, ctx->sun_radius, sat2occ,
+                                      &ctx->srp_occulter_shape[i], threshold);
+}
+
+static double contact_residual_theta(double theta, void *args) {
+    const ContactArgs *a = (const ContactArgs *)args;
+    double t = a->integ->t_old + theta * a->integ->h_old, y[6];
+    spody_dense_state_rv6(a->integ, t, y);
+    return contact_residual(a->ctx, a->occ, a->threshold, t, y);
+}
+
+/* first shadow contact inside the last step, INFINITY if none */
+static double shadow_contact_in_step(const ForceModelContext *ctx,
+                                     const IntegratorAllData *integ) {
+    const double h = integ->h_old;
+    const double *y0 = integ->y_old, *y1 = integ->y;
+    const double v = sqrt(y1[3]*y1[3] + y1[4]*y1[4] + y1[5]*y1[5]);
+    double first = INFINITY;
+
+    for (int i = 0; i < ctx->srp_n_occulters; i++) {
+        if (ctx->srp_occulter_shape[i].r_eq <= 0.0) continue;
+        double occ[3] = { 0.0, 0.0, 0.0 };
+        if (ctx->srp_occulter_naif[i] != ctx->naif_central)
+            spody_get_ephposition(ctx->eph, ctx->naif_central,
+                                  ctx->srp_occulter_naif[i],
+                                  spody_ctx_et(ctx, integ->t), occ);
+        double d = sqrt((occ[0]-y1[0])*(occ[0]-y1[0]) + (occ[1]-y1[1])*(occ[1]-y1[1])
+                      + (occ[2]-y1[2])*(occ[2]-y1[2]));
+        /* the residuals are angles; over the step they move by at most
+         * about the angle the satellite sweeps as seen from the body */
+        double reach = 2.0 * v * h / d;
+
+        for (int kind = 0; kind < 2; kind++) {
+            ContactArgs a = { ctx, integ, i, kind ? 0.0 : 1.0 };
+            double g0 = contact_residual(ctx, i, a.threshold, integ->t_old, y0);
+            double g1 = contact_residual(ctx, i, a.threshold, integ->t, y1);
+            double th_lo = 0.0, g_lo = g0, th_hi = 1.0, g_hi = g1;
+
+            if ((g0 > 0.0) == (g1 > 0.0)) {
+                /* no sign change at the ends: a grazing pass can still
+                 * enter and leave within the step */
+                if (fabs(g0) > reach && fabs(g1) > reach) continue;
+                int found = 0;
+                for (int k = 1; k < DISC_GRAZE_SAMPLES && !found; k++) {
+                    double th = (double)k / DISC_GRAZE_SAMPLES;
+                    double gk = contact_residual_theta(th, &a);
+                    if ((gk > 0.0) != (g0 > 0.0)) { th_hi = th; g_hi = gk; found = 1; }
+                    else                          { th_lo = th; g_lo = gk; }
+                }
+                if (!found) continue;
+            }
+            double th = th_hi;
+            if (spody_solver_brent(contact_residual_theta, &a, th_lo, th_hi,
+                                   g_lo, g_hi, 1, 1e-12, 60, &th) != SPODY_SOLVER_OK)
+                th = th_hi;
+            double tc = integ->t_old + th * h;
+            /* the crossing step itself holds the contact it crosses */
+            if (tc > integ->t_old + 2.0 * SPODY_DISC_STOP_EPS_S && tc < first)
+                first = tc;
+        }
+    }
+    return first;
+}
+
+double spody_next_force_discontinuity(ForceModelContext *ctx,
+                                      const IntegratorAllData *integ) {
+    if (!ctx || !integ) return INFINITY;
+    const double t = integ->t;
+    double next = INFINITY;
+
+    if (ctx->enable_srp && ctx->srp_n_occulters > 0 && ctx->sun_radius > 0.0
+        && integ->h_old > 0.0 && t > integ->t_old) {
+        double tc = shadow_contact_in_step(ctx, integ);
+        if (tc < INFINITY) ctx->disc_contact = tc;
+    }
+    if (ctx->disc_contact > integ->t_old + 2.0 * SPODY_DISC_STOP_EPS_S
+        && ctx->disc_contact < next)
+        next = ctx->disc_contact;
+
+    if (ctx->enable_drag && ctx->space_weather) {
+        double tb = next_space_weather_bin(ctx, t);
+        if (tb < next) next = tb;
+    }
+    return next;
 }
 
 double spody_ctx_et(const ForceModelContext *ctx, double t) {

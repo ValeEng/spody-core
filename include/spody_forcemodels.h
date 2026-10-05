@@ -316,6 +316,12 @@ struct ForceModelContext {
      * the default for a zero-initialised context. */
     const MappedDensityScale *density_scale;
 
+    /* Shadow contact found by spody_next_force_discontinuity inside a
+     * step that has to be redone (integrator t, per thread), kept until
+     * the integration passes it. A value <= t means none; the stepping
+     * loop sets it to INFINITY before each run. */
+    double  disc_contact;
+
     /* Time anchor: Ephemeris Time (seconds past J2000 TDB) at integrator
      * t = 0. The ephemeris query argument is simply
      *   et = et0 + t
@@ -521,18 +527,28 @@ double spody_ctx_t_of_label(const ForceModelContext *ctx, double label);
  * for coefficients that were not loaded. */
 int spody_adapt_hgdegree(double t, const double *y, double h, void *user);
 
-/* Integrator time of the next known discontinuity of the force model
- * strictly after t, or INFINITY when the model has none.
+/* First known discontinuity of the force model after the start of the
+ * last accepted step (integrator time), or INFINITY. Called once per
+ * step, right after it:
  *
- * The NRLMSISE-00 inputs are piecewise constant in UTC: the 3-hour Ap
- * bins, the daily F10.7 and the day of year all change on the 3-hour
- * UTC grid (00, 03, ..., 21 h), so with drag on and space weather
- * loaded that grid is returned. A Runge-Kutta step across a jump in
- * f loses its order (Hairer, Norsett, Wanner, "Solving Ordinary
- * Differential Equations I", 2nd ed., Springer, 1993, Sect. II.6);
- * the stepping loop stops on it instead. Decided once per step, like
- * spody_adapt_hgdegree. */
-double spody_next_force_discontinuity(const ForceModelContext *ctx, double t);
+ *   - NRLMSISE-00 inputs (drag on, space weather loaded): the 3-hour
+ *     Ap bins, the daily F10.7 and the day of year change on the
+ *     3-hour UTC grid; the next boundary after integ->t is returned.
+ *   - Shadow contacts (SRP with occulters): the first penumbra or
+ *     umbra contact of each occulter inside the last step
+ *     [t_old, t] (spody_get_eclipse_residual, Brent on
+ *     spody_dense_state_rv6), remembered in ctx->disc_contact until
+ *     the integration passes it. Contacts within 2 SPODY_DISC_STOP_EPS_S
+ *     of t_old belong to the crossing step and are not reported.
+ *
+ * A result <= integ->t means the last step crossed a discontinuity:
+ * the caller redoes it from (t_old, y_old) and stops there. A
+ * Runge-Kutta step across a jump in f loses its order (Hairer,
+ * Norsett, Wanner, "Solving Ordinary Differential Equations I", 2nd
+ * ed., Springer, 1993, Sect. II.6). Before the first step (h_old == 0
+ * or t == t_old) only the known discontinuities are returned. */
+double spody_next_force_discontinuity(ForceModelContext *ctx,
+                                      const IntegratorAllData *integ);
 
 /* CR3BP RHS in the synodic rotating frame, dimensional units.
  *

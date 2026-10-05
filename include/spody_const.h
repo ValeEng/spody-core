@@ -381,6 +381,12 @@ extern "C" {
 #define SPODY_HG_ADAPTIVE_LN_INV_EPS  38.0
 #define SPODY_HG_ADAPTIVE_STEP_MARGIN 1.0
 
+    // Discontinuity stops (spody_next_force_discontinuity): a step lands
+    // this far before a known jump of the force model and a step of at
+    // most twice this crosses it, so the jump falls inside an interval
+    // where the step error it causes, ~ |jump| * eps^2, is negligible.
+#define SPODY_DISC_STOP_EPS_S 1.0e-3
+
     // SGP4 constants. (WGS-72)
     // Source: Hoots & Roehrich, Spacetrack Report No. 3 (1980)
 #define SGP4_WGS72_MU   398600.8         // km^3/s^2
