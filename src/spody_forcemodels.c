@@ -17,6 +17,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "spody_forcemodels.h"
+#include "spody_math.h"          /* spody_getrotmatrix_ric2icrf */
 #include "spody_solver.h"
 #include "spody_time.h"          /* spody_tdb_minus_tt */
 
@@ -431,6 +432,33 @@ void spody_force_srp(const Spacecraft *sat, double fraction_sunlight,
  * is the m^2 -> km^2 contraction of A/m times the km^2 -> m^2
  * expansion of |v|^2 -- net 1/KM2M factor).
  */
+void spody_force_empirical(const SpodyEmpiricalAccel *ea, double et,
+                           const double r[3], const double v[3],
+                           double acc_out[3]) {
+    acc_out[0] = acc_out[1] = acc_out[2] = 0.0;
+    if (!ea || ea->n == 0) return;
+    double a[3];
+    if (et <= ea->et[0]) {
+        a[0] = ea->a_ric[0]; a[1] = ea->a_ric[1]; a[2] = ea->a_ric[2];
+    } else if (et >= ea->et[ea->n - 1]) {
+        const double *q = ea->a_ric + 3 * (ea->n - 1);
+        a[0] = q[0]; a[1] = q[1]; a[2] = q[2];
+    } else {
+        size_t lo = 0, hi = ea->n - 1;           /* et[lo] < et < et[hi] */
+        while (hi - lo > 1) {
+            const size_t mid = lo + (hi - lo) / 2;
+            if (ea->et[mid] <= et) lo = mid; else hi = mid;
+        }
+        const double w = (et - ea->et[lo]) / (ea->et[hi] - ea->et[lo]);
+        for (int k = 0; k < 3; ++k)
+            a[k] = ea->a_ric[3 * lo + k] + w * (ea->a_ric[3 * hi + k] - ea->a_ric[3 * lo + k]);
+    }
+    double R[3][3];
+    if (spody_getrotmatrix_ric2icrf(r, v, R) != 0) return;
+    for (int i = 0; i < 3; ++i)
+        acc_out[i] = R[i][0] * a[0] + R[i][1] * a[1] + R[i][2] * a[2];
+}
+
 void spody_force_drag(const ForceModelContext *ctx, double et,
                       const double r_sat[3], const double v_sat[3],
                       double acc[3]) {
@@ -791,6 +819,14 @@ int spody_force_rhs_default(double t, const double *y, double *dy, void *user) {
         acc_pert[2] += acc_tmp[2];
     }
 
+    /* ---- 4d. empirical acceleration (RIC table) --------------- */
+    if (ctx->empirical_accel) {
+        spody_force_empirical(ctx->empirical_accel, et, r, v, acc_tmp);
+        acc_pert[0] += acc_tmp[0];
+        acc_pert[1] += acc_tmp[1];
+        acc_pert[2] += acc_tmp[2];
+    }
+
     /* ---- 5. central two-body (largest term, summed last) ------ */
     double acc_2body[3];
     spody_force_twobody(ctx->mu_central, r, acc_2body);
@@ -1001,11 +1037,18 @@ void spody_force_breakdown(const ForceModelContext *ctx,
         spody_force_drag(ctx, et, r, v, bd->acc_drag);
     }
 
+    /* empirical acceleration: in the total only (no SPDYACC_ column) */
+    double acc_emp[3] = { 0.0, 0.0, 0.0 };
+    if (ctx->empirical_accel) {
+        spody_force_empirical(ctx->empirical_accel, et, r, v, acc_emp);
+    }
+
     /* total: accumulated exactly as rhs_default does -- a perturbation
      * sum starting from zero that takes SRP, drag, each third body in
      * turn, the harmonics, the solid tide and relativity, then the
-     * two-body term last; Earth radiation comes right after SRP. Adding the
-     * pre-summed acc_thirdbody_total instead regroups the third bodies
+     * two-body term last; Earth radiation comes right after SRP, the
+     * empirical acceleration (no column of its own) after relativity.
+     * Adding the pre-summed acc_thirdbody_total instead regroups the third bodies
      * and, with two or more of them next to a non-zero SRP, rounds
      * differently from the RHS. A disabled force is exactly zero here,
      * and adding zero leaves the sum unchanged. */
@@ -1022,6 +1065,8 @@ void spody_force_breakdown(const ForceModelContext *ctx,
             acc_pert += bd->acc_solidtides[k];
         if (ctx->enable_relativity)
             acc_pert += bd->acc_relativity[k];
+        if (ctx->empirical_accel)
+            acc_pert += acc_emp[k];
         bd->acc_total[k] = acc_pert + bd->acc_2body[k];
     }
 }

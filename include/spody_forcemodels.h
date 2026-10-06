@@ -56,6 +56,23 @@ typedef struct ForceModelContext ForceModelContext;
 #endif
 
 /* ============================================================
+ * Empirical acceleration in RIC
+ * ============================================================
+ * An acceleration given as a table of nodes in the satellite's own
+ * radial / in-track / cross-track axes (r_hat = r/|r|, c_hat =
+ * r x v/|r x v|, i_hat = c_hat x r_hat, rotation only:
+ * spody_getrotmatrix_ric2icrf), linearly interpolated in ET between
+ * the nodes and held at the end values outside them. The classical
+ * "empirical acceleration" of orbit determination (Montenbruck & Gill,
+ * "Satellite Orbits", Springer, 2000); the Monte Carlo fills it with
+ * Gauss-Markov process noise. Not owned by the context. */
+typedef struct {
+    const double *et;      /* node epochs, ET s, strictly ascending   */
+    const double *a_ric;   /* 3 per node (R, I, C), km/s^2            */
+    size_t        n;       /* >= 1                                    */
+} SpodyEmpiricalAccel;
+
+/* ============================================================
  * Spacecraft parameters
  * ============================================================
  * Mass and surface properties used by drag and SRP. The two
@@ -318,6 +335,12 @@ struct ForceModelContext {
      * the default for a zero-initialised context. */
     const MappedDensityScale *density_scale;
 
+    /* Optional empirical acceleration in RIC (SpodyEmpiricalAccel),
+     * added after relativity in spody_force_rhs_default and in the
+     * total of spody_force_breakdown. NULL (the zero-initialised
+     * default) = none, and the sums are bit-identical to before. */
+    const SpodyEmpiricalAccel *empirical_accel;
+
     /* Shadow contact found by spody_next_force_discontinuity inside a
      * step that has to be redone (integrator t, per thread), kept until
      * the integration passes it. A value <= t means none; the stepping
@@ -415,6 +438,14 @@ void spody_force_thirdbody_cowell(double mu_3, const double r_3[3],
  *   a = - SOLAR_LUMINOSITY_4PIC * Cr * (A/m) * fraction / |r|^3 * r_sat_to_sun */
 void spody_force_srp(const Spacecraft *sat, double fraction_sunlight,
                      const double r_sat_to_sun[3], double acc_out[3]);
+
+/* Empirical acceleration in ICRF (km/s^2): the table `ea` at `et`
+ * (linear between nodes, end values outside), rotated from the RIC
+ * axes of (r, v). Zero when ea is NULL or empty, or when the RIC axes
+ * are undefined (r = 0 or r parallel to v). */
+void spody_force_empirical(const SpodyEmpiricalAccel *ea, double et,
+                           const double r[3], const double v[3],
+                           double acc_out[3]);
 
 /* Atmospheric drag in ICRF (km/s^2).
  *
