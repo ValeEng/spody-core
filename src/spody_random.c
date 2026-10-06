@@ -97,13 +97,39 @@ void spody_philox4x64(const uint64_t ctr[4], const uint64_t key[2],
     out[0] = c0; out[1] = c1; out[2] = c2; out[3] = c3;
 }
 
+void spody_random_stream_init_domain(SpodyRandomStream *s, uint64_t seed,
+                                     uint64_t id, uint64_t sub, uint64_t dom)
+{
+    s->key[0] = seed; s->key[1] = sub;
+    s->ctr[0] = 0;    s->ctr[1] = id; s->ctr[2] = dom; s->ctr[3] = 0;
+    s->block[0] = s->block[1] = s->block[2] = s->block[3] = 0;
+    s->next = 4;
+}
+
 void spody_random_stream_init(SpodyRandomStream *s, uint64_t seed,
                               uint64_t id, uint64_t sub)
 {
-    s->key[0] = seed; s->key[1] = sub;
-    s->ctr[0] = 0;    s->ctr[1] = id; s->ctr[2] = 0; s->ctr[3] = 0;
-    s->block[0] = s->block[1] = s->block[2] = s->block[3] = 0;
-    s->next = 4;
+    spody_random_stream_init_domain(s, seed, id, sub, SPODY_RANDOM_DOMAIN_DRAW);
+}
+
+int spody_gauss_markov_nodes(SpodyRandomStream *s, double sigma, double tau,
+                             const double *t, size_t n, double *x)
+{
+    if (n == 0 || !(sigma >= 0.0) || !(tau > 0.0) || !isfinite(sigma)
+        || !isfinite(tau) || !isfinite(t[0]))
+        return -1;
+    for (size_t j = 1; j < n; ++j)
+        if (!(t[j] > t[j - 1]) || !isfinite(t[j])) return -1;
+    /* Gillespie (1996); 1 - phi^2 = -expm1(-2 dt / tau) keeps
+     * full precision when dt << tau. */
+    x[0] = sigma * spody_random_next_normal(s);
+    for (size_t j = 1; j < n; ++j) {
+        const double dt  = t[j] - t[j - 1];
+        const double phi = exp(-dt / tau);
+        x[j] = phi * x[j - 1]
+             + sigma * sqrt(-expm1(-2.0 * dt / tau)) * spody_random_next_normal(s);
+    }
+    return 0;
 }
 
 uint64_t spody_random_next_u64(SpodyRandomStream *s)

@@ -16,6 +16,7 @@
 #ifndef SPODY_RANDOM_H
 #define SPODY_RANDOM_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -38,8 +39,8 @@ extern "C" {
  * Stream convention (one stream per Monte Carlo case and per
  * dispersed quantity):
  *
- *     word k of stream (seed, id, sub) = Philox(ctr = {k / 4, id, 0, 0},
- *                                               key = {seed, sub})[k % 4]
+ *     word k of stream (seed, id, sub, dom) = Philox(ctr = {k / 4, id, dom, 0},
+ *                                                    key = {seed, sub})[k % 4]
  *
  * so case `id` draws the same numbers whatever the number of cases,
  * the thread count or the order the cases run in, and each dispersed
@@ -50,6 +51,13 @@ extern "C" {
  * its name. Two quantities of one run must NEVER share a substream
  * (they would draw identical numbers): callers check it, and any new
  * kind of dispersed quantity needs an id no other can take.
+ *
+ * The third counter word is the stream DOMAIN: 0 for the draws made
+ * once per case (initial state, parameters), 1 for the process noise
+ * drawn along the trajectory. Two streams of different domains never
+ * share a counter, whatever their substreams, so the separation holds
+ * by construction (no hash can collide across it), and adding process
+ * noise leaves every domain-0 draw unchanged.
  *
  * Normal deviates: the inverse of the standard normal CDF applied to
  * one uniform (AS241, see spody_normal_quantile). One uniform gives
@@ -73,9 +81,20 @@ typedef struct {
     int      next;       /* next unused word of block; 4 = refill first */
 } SpodyRandomStream;
 
-/* Position `s` at word 0 of stream (seed, id, sub). */
+/* Stream domains: the third counter word (see the convention above). */
+enum {
+    SPODY_RANDOM_DOMAIN_DRAW          = 0,
+    SPODY_RANDOM_DOMAIN_PROCESS_NOISE = 1
+};
+
+/* Position `s` at word 0 of stream (seed, id, sub) of domain
+ * SPODY_RANDOM_DOMAIN_DRAW. */
 void spody_random_stream_init(SpodyRandomStream *s, uint64_t seed,
                               uint64_t id, uint64_t sub);
+
+/* Position `s` at word 0 of stream (seed, id, sub) of domain `dom`. */
+void spody_random_stream_init_domain(SpodyRandomStream *s, uint64_t seed,
+                                     uint64_t id, uint64_t sub, uint64_t dom);
 
 /* Substream id of a named quantity: the 64-bit FNV-1a hash
  * (Fowler-Noll-Vo) of the NUL-terminated `name`, e.g. the batch
@@ -106,6 +125,27 @@ double spody_normal_quantile(double p);
 
 /* Next standard normal deviate of the stream: one word, one deviate. */
 double spody_random_next_normal(SpodyRandomStream *s);
+
+/* First-order Gauss-Markov (Ornstein-Uhlenbeck) process
+ *
+ *     dx/dt = -x / tau + w(t),   stationary variance sigma^2,
+ *     E[x(t) x(t + d)] = sigma^2 exp(-|d| / tau)
+ *
+ * (Uhlenbeck & Ornstein, Phys. Rev. 36, 823, 1930) sampled EXACTLY at
+ * the n strictly increasing times t[0..n-1] (Gillespie, "Exact
+ * numerical simulation of the Ornstein-Uhlenbeck process and its
+ * integral", Phys. Rev. E 54(2), 2084, 1996):
+ *
+ *     x[0]   = sigma z[0]                      (stationary start)
+ *     x[j+1] = phi x[j] + sigma sqrt(1 - phi^2) z[j+1],
+ *     phi    = exp(-(t[j+1] - t[j]) / tau)
+ *
+ * with z[j] the next n normal deviates of `s`, in order. The node
+ * values have exactly the statistics of the continuous process for
+ * any spacing. Returns 0, or -1 (x untouched) for n = 0, sigma < 0,
+ * tau <= 0, non-finite inputs or non-increasing times. */
+int spody_gauss_markov_nodes(SpodyRandomStream *s, double sigma, double tau,
+                             const double *t, size_t n, double *x);
 
 #ifdef __cplusplus
 }
