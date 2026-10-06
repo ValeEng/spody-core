@@ -427,14 +427,11 @@ static int _gps_scan_file(FILE *fin,
         spody_rotate_vector(R_bf2i, r_ecef_km, r_icrf);
         spody_rotate_vector(R_bf2i, v_ecef_km, v_icrf_rot);
 
-        /* omega x r in ICRF with the full ITRS z-axis (not nominal
-         * z-hat). See spody_glonass.c for the J2024 ~480 arcsec
-         * precession argument that motivates this. */
-        double omega_icrf[3] = {
-            EARTH_ROT_RATE_RADPS * R_bf2i[0][2],
-            EARTH_ROT_RATE_RADPS * R_bf2i[1][2],
-            EARTH_ROT_RATE_RADPS * R_bf2i[2][2],
-        };
+        /* omega x r with the Earth's true rotation (axis = CIP, rate
+         * from the EOP chain), the transport theorem of every ECEF ->
+         * ICRF velocity in the engine. */
+        double omega_icrf[3];
+        spody_bf_angular_velocity_icrf(ctx, et, omega_icrf);
         double v_icrf[3];
         v_icrf[0] = v_icrf_rot[0]
                   + omega_icrf[1] * r_icrf[2] - omega_icrf[2] * r_icrf[1];
@@ -524,7 +521,8 @@ int spody_convert_gps_to_state_icrf(int n_inputs,
     MappedIAU2006 iau_map = {0};
     spody_setup_MappedEOP(&eop_map, &eop_data);
     spody_setup_MappedIAU2006(&iau_map, &iau_data);
-    ForceModelContext ctx = { .eop = &eop_map, .iau2006 = &iau_map };
+    ForceModelContext ctx = { .eop = &eop_map, .iau2006 = &iau_map,
+                              .get_bf_rotation = spody_bf_rotation_earth };
 
     FILE *fout = fopen(output_bin, "wb");
     if (!fout) {

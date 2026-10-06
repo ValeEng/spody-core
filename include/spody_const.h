@@ -115,9 +115,11 @@ extern "C" {
 
     // Earth rotation rate. IERS Conventions 2010 sec. 1.4 nominal
     // sidereal value; identical to WGS-84 / GLONASS-ICD / GPS-ICD
-    // omega_e at 1e-12. Polar-motion corrections to the instantaneous
-    // axis are sub-arcsec and ignored where this constant is used
-    // (GNSS broadcast ECEF -> ICRF velocity).
+    // omega_e at 1e-12. Used where the ICD prescribes it (the GPS
+    // broadcast orbit algorithm) and as the spin of the co-rotating
+    // atmosphere in the drag; an ECEF -> ICRF velocity instead takes the
+    // true rotation of the ITRS chain (spody_bf_angular_velocity_icrf):
+    // polar motion tilts the axis by tenths of an arcsecond, ~1 mm/s.
 #define EARTH_ROT_RATE_RADPS 7.2921151467e-5
 
     // TIO locator s'(t) = -47 uas per Julian century (IERS TN 36 eq.
@@ -218,10 +220,7 @@ extern "C" {
     // contain the light source itself.
 #define SUN_NAIF 10
 
-    // NAIF id of the Earth. Its body-fixed angular velocity is taken as
-    // EARTH_ROT_RATE_RADPS about the ITRS z axis -- the convention the
-    // GNSS converters use -- rather than differentiated numerically, so a
-    // rotating-frame state and a converted one agree to the bit.
+    // NAIF id of the Earth.
 #define EARTH_NAIF 399
 
     // General relativity, Schwarzschild term of the central body (IERS
@@ -305,11 +304,13 @@ extern "C" {
     // tide-free: the full tide has to be added (LRO fits, 2026-09).
 #define TIDE_MOON_K2       0.024116
 
-    // Half-width of the central difference that turns a body-fixed
-    // rotation provider into an angular velocity (bodies other than the
-    // Earth: the Moon, from its DE440 libration). 60 s keeps the
-    // truncation at (omega*h)^2 ~ 3e-8 of the lunar rate and the
-    // round-off of the matrix entries far below it.
+    // Half-interval of the rotation R(t+h) R(t-h)^T from which
+    // spody_bf_angular_velocity_icrf reads a body's angular velocity
+    // (axis-angle form, exact for a fixed axis). 60 s: long enough that
+    // the rounding of the matrix entries (the Earth's UT1 date resolves
+    // ~0.6 us, 4.6e-11 rad of ERA) stays below 1e-15 rad/s after the
+    // division by 2h, short enough that omega barely changes across it
+    // (h = 30 and 300 s agree with 60 s to 1e-16 rad/s for the Earth).
 #define SPODY_BF_OMEGA_FD_STEP_S 60.0
 
     // Node spacing of the IAU 2006 (X, Y, s) interpolation grid in

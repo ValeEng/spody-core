@@ -142,12 +142,14 @@ void spody_bf_rotation_moon(const ForceModelContext *ctx, double et,
  * that turns a velocity measured in the rotating frame (ECEF-style)
  * into an inertial one.
  *
- * Earth (ctx->naif_central == EARTH_NAIF): EARTH_ROT_RATE_RADPS about
- * the ITRS z axis, exactly as the GNSS converters apply it, so the two
- * paths agree to the bit. Any other body: a central difference of
- * ctx->get_bf_rotation over +-SPODY_BF_OMEGA_FD_STEP_S, read off the
- * skew matrix dR/dt R^T -- for the Moon that follows the DE440
- * libration, not a nominal spin. Requires ctx->get_bf_rotation. */
+ * Every body, the Earth included: the rotation R(t+h) R(t-h)^T of
+ * ctx->get_bf_rotation over +-SPODY_BF_OMEGA_FD_STEP_S, read off in
+ * axis-angle form (exact for a fixed axis). For the Earth that is the
+ * true rotation of the engine's ITRS chain -- about the CIP, tilted
+ * from the ITRS z axis by polar motion, at the EOP rate -- not a
+ * nominal spin about z; for the Moon it follows the DE440 libration.
+ * The GNSS converters call this same function. Requires
+ * ctx->get_bf_rotation. */
 void spody_bf_angular_velocity_icrf(const ForceModelContext *ctx, double et,
                                     double omega_icrf[3]);
 

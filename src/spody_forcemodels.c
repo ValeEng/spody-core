@@ -76,32 +76,47 @@ void spody_bf_rotation_moon(const ForceModelContext *ctx, double et,
 
 void spody_bf_angular_velocity_icrf(const ForceModelContext *ctx, double et,
                                     double omega_icrf[3]) {
-    double R_i2bf[3][3], R_bf2i[3][3];
-    if (ctx->naif_central == EARTH_NAIF) {
-        ctx->get_bf_rotation(ctx, et, R_i2bf, R_bf2i);
-        for (int i = 0; i < 3; i++)
-            omega_icrf[i] = EARTH_ROT_RATE_RADPS * R_bf2i[i][2];
-        return;
-    }
-    /* R = R_bf2i(t). Its derivative satisfies dR/dt = [omega]x R, so
-     * [omega]x = dR/dt R^T; the skew part is averaged over its two
-     * mirrored entries. */
+    /* R = R_bf2i(t) obeys dR/dt = [omega]x R (omega in ICRF), so over
+     * a short interval R(t+h) R(t-h)^T = exp([omega]x 2h) when omega is
+     * constant across it. omega is read off that rotation by its
+     * axis-angle form (Rodrigues): sin(theta) u = vee(D - D^T)/2,
+     * cos(theta) = (tr D - 1)/2, omega = u theta/(2h). Unlike the
+     * difference quotient (R(t+h) - R(t-h))/(2h) R^T, which returns
+     * omega sin(omega h)/(omega h) -- 2.3e-10 rad/s short for the Earth
+     * at h = 60 s, 6 mm/s at GNSS radius -- this is exact for a
+     * rotation about a fixed axis; what remains is the change of
+     * omega over 2h (precession-nutation, LOD), below 1e-16 rad/s.
+     *
+     * The Earth goes through the same path as every other body: its
+     * rotation axis is the CIP, not the ITRS z axis -- polar motion
+     * tilts it by a few tenths of an arcsecond (IERS Conventions 2010,
+     * ch. 5), which is omega*theta*r ~ 1 mm/s at LAGEOS radius and
+     * hundreds of metres along track in three days if ignored. */
     const double h = SPODY_BF_OMEGA_FD_STEP_S;
-    double Rp[3][3], Rm[3][3];
+    double R_i2bf[3][3], Rp[3][3], Rm[3][3];
     ctx->get_bf_rotation(ctx, et + h, R_i2bf, Rp);
     ctx->get_bf_rotation(ctx, et - h, R_i2bf, Rm);
-    ctx->get_bf_rotation(ctx, et,     R_i2bf, R_bf2i);
-    double W[3][3];
+    double D[3][3];
     for (int i = 0; i < 3; i++)
         for (int j = 0; j < 3; j++) {
             double s = 0.0;
             for (int k = 0; k < 3; k++)
-                s += (Rp[i][k] - Rm[i][k]) / (2.0 * h) * R_bf2i[j][k];
-            W[i][j] = s;
+                s += Rp[i][k] * Rm[j][k];
+            D[i][j] = s;
         }
-    omega_icrf[0] = 0.5 * (W[2][1] - W[1][2]);
-    omega_icrf[1] = 0.5 * (W[0][2] - W[2][0]);
-    omega_icrf[2] = 0.5 * (W[1][0] - W[0][1]);
+    double v[3] = { 0.5 * (D[2][1] - D[1][2]),
+                    0.5 * (D[0][2] - D[2][0]),
+                    0.5 * (D[1][0] - D[0][1]) };
+    double sin_th = sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+    double cos_th = 0.5 * (D[0][0] + D[1][1] + D[2][2] - 1.0);
+    if (sin_th == 0.0) {
+        omega_icrf[0] = omega_icrf[1] = omega_icrf[2] = 0.0;
+        return;
+    }
+    double k = atan2(sin_th, cos_th) / sin_th / (2.0 * h);
+    omega_icrf[0] = v[0] * k;
+    omega_icrf[1] = v[1] * k;
+    omega_icrf[2] = v[2] * k;
 }
 
 void spody_force_sphericalharmonics(const ForceModelContext *ctx,
