@@ -65,11 +65,28 @@ typedef struct ForceModelContext ForceModelContext;
  * the nodes and held at the end values outside them. The classical
  * "empirical acceleration" of orbit determination (Montenbruck & Gill,
  * "Satellite Orbits", Springer, 2000); the Monte Carlo fills it with
- * Gauss-Markov process noise. Not owned by the context. */
+ * Gauss-Markov process noise. Not owned by the context.
+ *
+ * Per axis k the acceleration is
+ *
+ *     a_k = c_k + a_cos_k cos(u) + a_sin_k sin(u),
+ *
+ * u the argument of latitude of the current state (angle in the orbit
+ * plane from the ascending node on the ICRF equator, measured along
+ * the motion; the true longitude from +x for an equatorial orbit):
+ * the once-per-revolution terms of empirical orbit models (Beutler et
+ * al., "Extended orbit modeling techniques at the CODE processing
+ * center of the IGS", Manuscripta Geodaetica 19, 1994; Jaeggi,
+ * Hugentobler & Beutler, "Pseudo-stochastic orbit modeling techniques
+ * for low-Earth orbiters", J. Geodesy 80, 2006). Each of a_ric, a_cos,
+ * a_sin may be NULL (that part is zero); a zero-initialised tail keeps
+ * a three-field initialiser valid. */
 typedef struct {
     const double *et;      /* node epochs, ET s, strictly ascending   */
-    const double *a_ric;   /* 3 per node (R, I, C), km/s^2            */
+    const double *a_ric;   /* 3 per node (R, I, C), km/s^2, or NULL   */
     size_t        n;       /* >= 1                                    */
+    const double *a_cos;   /* 3 per node, cos(u) coefficients, or NULL */
+    const double *a_sin;   /* 3 per node, sin(u) coefficients, or NULL */
 } SpodyEmpiricalAccel;
 
 /* ============================================================
@@ -440,7 +457,8 @@ void spody_force_srp(const Spacecraft *sat, double fraction_sunlight,
                      const double r_sat_to_sun[3], double acc_out[3]);
 
 /* Empirical acceleration in ICRF (km/s^2): the table `ea` at `et`
- * (linear between nodes, end values outside), rotated from the RIC
+ * (linear between nodes, end values outside; the once-per-revolution
+ * coefficients times cos u / sin u of (r, v)), rotated from the RIC
  * axes of (r, v). Zero when ea is NULL or empty, or when the RIC axes
  * are undefined (r = 0 or r parallel to v). */
 void spody_force_empirical(const SpodyEmpiricalAccel *ea, double et,

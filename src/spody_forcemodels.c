@@ -437,24 +437,47 @@ void spody_force_empirical(const SpodyEmpiricalAccel *ea, double et,
                            double acc_out[3]) {
     acc_out[0] = acc_out[1] = acc_out[2] = 0.0;
     if (!ea || ea->n == 0) return;
-    double a[3];
-    if (et <= ea->et[0]) {
-        a[0] = ea->a_ric[0]; a[1] = ea->a_ric[1]; a[2] = ea->a_ric[2];
-    } else if (et >= ea->et[ea->n - 1]) {
-        const double *q = ea->a_ric + 3 * (ea->n - 1);
-        a[0] = q[0]; a[1] = q[1]; a[2] = q[2];
-    } else {
-        size_t lo = 0, hi = ea->n - 1;           /* et[lo] < et < et[hi] */
+    /* nodes lo, hi and weight w of the linear interpolation (lo = hi
+     * outside the node span: the end value is held) */
+    size_t lo = 0, hi = 0;
+    double w = 0.0;
+    if (et >= ea->et[ea->n - 1]) {
+        lo = hi = ea->n - 1;
+    } else if (et > ea->et[0]) {
+        hi = ea->n - 1;                          /* et[lo] < et < et[hi] */
         while (hi - lo > 1) {
             const size_t mid = lo + (hi - lo) / 2;
             if (ea->et[mid] <= et) lo = mid; else hi = mid;
         }
-        const double w = (et - ea->et[lo]) / (ea->et[hi] - ea->et[lo]);
-        for (int k = 0; k < 3; ++k)
-            a[k] = ea->a_ric[3 * lo + k] + w * (ea->a_ric[3 * hi + k] - ea->a_ric[3 * lo + k]);
+        w = (et - ea->et[lo]) / (ea->et[hi] - ea->et[lo]);
     }
     double R[3][3];
     if (spody_getrotmatrix_ric2icrf(r, v, R) != 0) return;
+    double cu = 0.0, su = 0.0;
+    if (ea->a_cos || ea->a_sin) {
+        /* argument of latitude: node line n = z x h (x when equatorial),
+         * cos u = n.r_hat, sin u = (h_hat x n).r_hat */
+        const double h[3] = { R[0][2], R[1][2], R[2][2] };     /* c_hat */
+        double nd[3] = { -h[1], h[0], 0.0 };
+        double nn = sqrt(nd[0] * nd[0] + nd[1] * nd[1]);
+        if (nn < 1.0e-12) { nd[0] = 1.0; nd[1] = 0.0; nn = 1.0; }
+        nd[0] /= nn; nd[1] /= nn;
+        const double m[3] = { h[1] * nd[2] - h[2] * nd[1],
+                              h[2] * nd[0] - h[0] * nd[2],
+                              h[0] * nd[1] - h[1] * nd[0] };
+        cu = nd[0] * R[0][0] + nd[1] * R[1][0] + nd[2] * R[2][0];
+        su = m[0] * R[0][0] + m[1] * R[1][0] + m[2] * R[2][0];
+    }
+    double a[3];
+    for (int k = 0; k < 3; ++k) {
+        a[k] = 0.0;
+        if (ea->a_ric)
+            a[k] += ea->a_ric[3 * lo + k] + w * (ea->a_ric[3 * hi + k] - ea->a_ric[3 * lo + k]);
+        if (ea->a_cos)
+            a[k] += cu * (ea->a_cos[3 * lo + k] + w * (ea->a_cos[3 * hi + k] - ea->a_cos[3 * lo + k]));
+        if (ea->a_sin)
+            a[k] += su * (ea->a_sin[3 * lo + k] + w * (ea->a_sin[3 * hi + k] - ea->a_sin[3 * lo + k]));
+    }
     for (int i = 0; i < 3; ++i)
         acc_out[i] = R[i][0] * a[0] + R[i][1] * a[1] + R[i][2] * a[2];
 }
