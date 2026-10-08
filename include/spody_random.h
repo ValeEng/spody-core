@@ -142,10 +142,19 @@ double spody_random_next_normal(SpodyRandomStream *s);
  *
  * with z[j] the next n normal deviates of `s`, in order. The node
  * values have exactly the statistics of the continuous process for
- * any spacing. Returns 0, or -1 (x untouched) for n = 0, sigma < 0,
+ * any spacing.
+ *
+ * `scale` (NULL = constant sigma) gives a time-varying sigma_j =
+ * sigma scale[j] at node j, in both terms above: the variance then
+ * relaxes towards sigma_j^2 with time constant tau / 2, the
+ * activity-scaled stochastic error of Wright (AGI, "Real-time
+ * estimation of local atmospheric density"). With scale NULL the
+ * result is bit-identical to the constant-sigma recursion.
+ *
+ * Returns 0, or -1 (x untouched) for n = 0, sigma < 0, a scale < 0,
  * tau <= 0, non-finite inputs or non-increasing times. */
-int spody_gauss_markov_nodes(SpodyRandomStream *s, double sigma, double tau,
-                             const double *t, size_t n, double *x);
+int spody_gauss_markov_nodes(SpodyRandomStream *s, double sigma, const double *scale,
+                             double tau, const double *t, size_t n, double *x);
 
 #ifdef __cplusplus
 }

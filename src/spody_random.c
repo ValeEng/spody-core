@@ -112,22 +112,25 @@ void spody_random_stream_init(SpodyRandomStream *s, uint64_t seed,
     spody_random_stream_init_domain(s, seed, id, sub, SPODY_RANDOM_DOMAIN_DRAW);
 }
 
-int spody_gauss_markov_nodes(SpodyRandomStream *s, double sigma, double tau,
-                             const double *t, size_t n, double *x)
+int spody_gauss_markov_nodes(SpodyRandomStream *s, double sigma, const double *scale,
+                             double tau, const double *t, size_t n, double *x)
 {
     if (n == 0 || !(sigma >= 0.0) || !(tau > 0.0) || !isfinite(sigma)
         || !isfinite(tau) || !isfinite(t[0]))
         return -1;
-    for (size_t j = 1; j < n; ++j)
-        if (!(t[j] > t[j - 1]) || !isfinite(t[j])) return -1;
+    for (size_t j = 0; j < n; ++j) {
+        if (j > 0 && (!(t[j] > t[j - 1]) || !isfinite(t[j]))) return -1;
+        if (scale && (!(scale[j] >= 0.0) || !isfinite(scale[j]))) return -1;
+    }
     /* Gillespie (1996); 1 - phi^2 = -expm1(-2 dt / tau) keeps
      * full precision when dt << tau. */
-    x[0] = sigma * spody_random_next_normal(s);
+    x[0] = (scale ? sigma * scale[0] : sigma) * spody_random_next_normal(s);
     for (size_t j = 1; j < n; ++j) {
         const double dt  = t[j] - t[j - 1];
         const double phi = exp(-dt / tau);
+        const double sj  = scale ? sigma * scale[j] : sigma;
         x[j] = phi * x[j - 1]
-             + sigma * sqrt(-expm1(-2.0 * dt / tau)) * spody_random_next_normal(s);
+             + sj * sqrt(-expm1(-2.0 * dt / tau)) * spody_random_next_normal(s);
     }
     return 0;
 }
