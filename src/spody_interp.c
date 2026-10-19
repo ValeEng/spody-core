@@ -178,3 +178,47 @@ double spody_interp_linear(const double *xs, const double *ys,
     double t = (x - xs[i]) / (xs[i + 1] - xs[i]);
     return ys[i] + t * (ys[i + 1] - ys[i]);
 }
+
+/*
+ * Lagrange form of the interpolating polynomial (Abramowitz & Stegun,
+ * Handbook of Mathematical Functions, 1964, eq. 25.2.2):
+ *
+ *   p(x)  = sum_j y_j l_j(x),   l_j(x) = prod_{m != j} (x - x_m) / (x_j - x_m)
+ *   p'(x) = sum_j y_j l_j'(x),  l_j'(x) = sum_{m != j} 1 / (x_j - x_m)
+ *                                  * prod_{k != j, m} (x - x_k) / (x_j - x_k)
+ *
+ * The derivative is written as a sum of products, not as l_j(x) times
+ * sum 1 / (x - x_m), so it stays finite when x falls on a node. O(n^3)
+ * work for the derivative, trivial for the 8-12 nodes of an orbit
+ * interpolation (Schenewerk, "A brief review of basic GPS orbit
+ * interpolation strategies", GPS Solutions 6, 265-267, 2003). The
+ * basis weights are computed once and shared by all `dim` components.
+ */
+void spody_interp_lagrange(const double *xs, const double *ys,
+                           size_t n, int dim, double x,
+                           double *y_out, double *dy_out) {
+    for (int k = 0; k < dim; ++k) {
+        y_out[k] = 0.0;
+        if (dy_out) dy_out[k] = 0.0;
+    }
+    for (size_t j = 0; j < n; ++j) {
+        double l = 1.0;
+        for (size_t m = 0; m < n; ++m)
+            if (m != j) l *= (x - xs[m]) / (xs[j] - xs[m]);
+        double dl = 0.0;
+        if (dy_out) {
+            for (size_t m = 0; m < n; ++m) {
+                if (m == j) continue;
+                double term = 1.0 / (xs[j] - xs[m]);
+                for (size_t q = 0; q < n; ++q)
+                    if (q != j && q != m) term *= (x - xs[q]) / (xs[j] - xs[q]);
+                dl += term;
+            }
+        }
+        const double *yj = ys + j * (size_t)dim;
+        for (int k = 0; k < dim; ++k) {
+            y_out[k] += l * yj[k];
+            if (dy_out) dy_out[k] += dl * yj[k];
+        }
+    }
+}

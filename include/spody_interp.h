@@ -52,6 +52,17 @@ size_t spody_bracket_index(const double *xs, size_t n, double x);
 double spody_interp_linear(const double *xs, const double *ys,
                            size_t n, double x);
 
+/* Lagrange interpolating polynomial through n nodes (xs[i], ys[i]),
+ * and its derivative, at x; the state has `dim` components stored
+ * node by node, ys[i * dim + k]. Nodes must be distinct, in any order;
+ * no clamping: x outside the nodes extrapolates. The usual way to read
+ * positions-only precise orbits (SP3 at 5 or 15 min): 8-12 nodes
+ * centred on x, the derivative giving the velocity. dy_out may be NULL;
+ * y_out and dy_out hold `dim` doubles each. n >= 1. */
+void spody_interp_lagrange(const double *xs, const double *ys,
+                           size_t n, int dim, double x,
+                           double *y_out, double *dy_out);
+
 /* Scalar cubic Hermite. Returns the C^1 cubic at t that matches
  *   y(t_a) = y_a,   y'(t_a) = dy_a,
  *   y(t_b) = y_b,   y'(t_b) = dy_b.
