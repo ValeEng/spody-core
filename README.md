@@ -16,14 +16,16 @@
 The library provides a clean, modular API covering the core pillars of orbital mechanics:
 
 - 🌍 **Ephemeris parsing** — JPL DE binary, ET seconds past J2000 with `SPDYEPET` magic header; position, velocity and full state via the analytic Chebyshev derivative
-- 🌑 **Eclipse detection** — Conical shadow with umbra / penumbra / anteumbra (Montenbruck-Gill, finite Sun + occulter), **multi-occulter**: overlapping shadows combined by inclusion-exclusion
+- 🌑 **Eclipse detection** — Conical shadow with umbra / penumbra / anteumbra (Montenbruck-Gill, finite Sun + occulter), **multi-occulter**: overlapping shadows combined by inclusion-exclusion; occulters may be **oblate spheroids** (exact limb, pck00011 radii)
 - 🌐 **Spherical harmonics gravity** — Body-agnostic (lunar GRGM, terrestrial EIGEN) via the Pines/Lundberg-Schutz recurrence (stable up to N≥1000), with an optional **adaptive truncation degree** driven by the orbit radius
-- 🚀 **Numerical integrators** — Adaptive Dormand-Prince 5(4) "7S" stability-optimal pair with first-same-as-last reuse (six RHS evaluations per step), classical RK4, reporting accepted / rejected steps and RHS evaluations
-- 🛰 **Force models** — Composite RHS with two-body + harmonics + third bodies + SRP (cannonball, conical eclipse) + atmospheric drag; a separate **CR3BP** RHS for the synodic rotating frame
+- 🚀 **Numerical integrators** — Adaptive Dormand-Prince 5(4) "7S" pair and Dormand-Prince **8(5,3)** (DOP853), both with first-same-as-last reuse, classical RK4; stops on the force model's known **discontinuities** (space-weather bins, shadow contacts); accepted / rejected steps and RHS evaluations reported
+- 🛰 **Force models** — Composite RHS with two-body + harmonics + third bodies + **solid-body tides** + **general relativity** + SRP (cannonball, conical eclipse) + **Earth albedo and infrared** + atmospheric drag + an **empirical acceleration in RIC**; a separate **CR3BP** RHS for the synodic rotating frame
 - 🌬 **Atmosphere** — Native NRLMSISE-00 port with CelesTrak space-weather input and an optional density-scale `k(t)` node table
-- 🧭 **Time & Earth orientation** — IERS leap seconds + SPICE `deltet`, so ET is true TDB end-to-end; EOP reader and the IAU 2006/2000A_R06 inertial-to-ITRS chain
-- 🎯 **Events & solver** — Event detection (impact, eclipse, altitude crossings) with Brent localisation on the integrator's quintic dense output
-- 🔄 **Format converters** — ICGEM `.gfc` gravity fields, IGS/MGEX SP3 precise orbits, RINEX-NAV GPS and GLONASS broadcast, CCSDS OEM
+- 🧭 **Time & Earth orientation** — IERS leap seconds + SPICE `deltet`, so ET is true TDB end-to-end, with optional **TT integration** for geocentric runs; EOP reader and the IAU 2006/2000A_R06 inertial-to-ITRS chain
+- 🎯 **Events & solver** — Event detection (impact, eclipse, altitude crossings, geodetic altitude above a spheroid) with Brent localisation on the integrator's quintic dense output
+- 📡 **GP element sets** — SGP4/SDP4 (Spacetrack Report No. 3 + AIAA 2006-6753) and one element set to one ICRF state at its epoch
+- 🎲 **Monte Carlo sampling** — Reproducible Philox4x64-10 streams (one substream per dispersed quantity), AS241 normal quantile, Gauss-Markov process-noise nodes
+- 🔄 **Format converters** — ICGEM `.gfc` gravity fields, IGS/MGEX/ILRS SP3 precise orbits, RINEX-NAV GPS and GLONASS broadcast, CCSDS OEM
 - 🧩 **Logging** — A text log mirror that tees every library and host message to the run's log file
 
 The runtime API is **thread-safe by construction**: shared, read-only data structures
@@ -37,26 +39,28 @@ single dataset can drive many concurrent propagations without contention.
 | Module | Description |
 |---|---|
 | `ephemeris` | Parses and queries JPL planetary ephemerides (e.g. DE440). On-disk format is `SPDYEPET` (ET seconds past J2000, ~250× more precision than legacy JD-days). Memory-mapped with thread-safe handle/data split. |
-| `eclipse` | Solar eclipse fraction via Montenbruck-Gill: conical shadow with finite Sun radius + finite occulter radius, returning the visible-Sun fraction across umbra, penumbra, and anteumbra. Takes a **list** of occulting bodies and combines them by inclusion-exclusion, so shadows that overlap on the solar disc are not counted twice (Earth seen from a lunar orbit, Moon transiting the Sun for an Earth orbiter). |
+| `eclipse` | Solar eclipse fraction via Montenbruck-Gill: conical shadow with finite Sun radius + finite occulter radius, returning the visible-Sun fraction across umbra, penumbra, and anteumbra. Takes a **list** of occulting bodies and combines them by inclusion-exclusion, so shadows that overlap on the solar disc are not counted twice (Earth seen from a lunar orbit, Moon transiting the Sun for an Earth orbiter). Each occulter is a sphere or an oblate spheroid (`SpodyBodyShape`): a spheroid enters with the angular radius of its limb in the plane of the Sun, in closed form (after Adhya et al. 2004), computed only in the seconds around each contact where the polar and equatorial spheres disagree. `spody_get_eclipse_residual` gives a root finder a signed predicate that is not flat on either side of the umbra and penumbra contacts. |
 | `harmonics` | Spherical-harmonics gravity using the Pines / Lundberg-Schutz recurrence. Returns the acceleration `-∇V_pert` (callers just sum into `dvdt`). Includes a `_hpc` SIMD-friendly variant for production hot paths, and an adaptive degree rule `N(r) = ln(1/eps) / ln(r / R_ref)` that lets an eccentric orbit stop paying its closest-approach degree for the whole revolution. |
-| `integrators` | ODE integrators with a generic RHS callback. RKDP45 (Dormand-Prince 5(4) "7S" pair, GMAT-style step control) and RK4 fixed-step. The step control has no separate absolute tolerance: per 3-component block, the embedded error estimate is taken relative to the step's own change of that block (absolute when that change is small). RKDP45 keeps its last stage as the next step's first (FSAL): six RHS calls per attempted step, and a caller that retunes the force model between two steps says so through `spody_integrator_invalidate_fsal`. Every run carries `n_accepted` / `n_rejected` / `n_rhs` counters. |
-| `forcemodels` | Composite RHS used by the integrator: two-body central + spherical harmonics + third bodies (Cowell) + cannonball SRP with conical eclipse over a caller-supplied occulter list (delegates to `eclipse`) + atmospheric drag with air co-rotation. Per-force breakdown helper for diagnostics. A second RHS, `spody_force_rhs_cr3bp`, integrates the Circular Restricted 3-Body Problem in the synodic rotating frame from the `cr3bp_*` fields of the same context, with converters to and from a primary's inertial frame. |
+| `integrators` | ODE integrators with a generic RHS callback. RKDP45 (Dormand-Prince 5(4) "7S" pair, GMAT-style step control), DOP853 (Dormand-Prince 8(5,3), error estimate `err5² / sqrt(err5² + 0.01 err3²)` of its order-5 and order-3 estimates) and RK4 fixed-step. The step control has no separate absolute tolerance: per 3-component block, the embedded error estimate is taken relative to the step's own change of that block (absolute when that change is small). Both adaptive methods reuse the derivative at the new state as the next step's first stage (FSAL): six RHS calls per attempted RK45 step, eleven per DOP853 step plus one per accepted step; a caller that retunes the force model between two steps says so through `spody_integrator_invalidate_fsal`. Dense output for `(r, v)` states is the quintic Hermite `spody_dense_state_rv6` for both methods (`spody_dense_eval` is deprecated and its name reserved). Every run carries `n_accepted` / `n_rejected` / `n_rhs` counters. |
+| `forcemodels` | Composite RHS used by the integrator: two-body central + spherical harmonics + third bodies (Cowell) + solid-body tides of the central body (IERS 2010 sec. 6.2.1, frequency-independent step) + general relativity (Schwarzschild term, IERS 2010 eq. 10.12) + cannonball SRP with conical eclipse over a caller-supplied occulter list (delegates to `eclipse`) + Earth radiation pressure, albedo and infrared with the Knocke et al. (1988) model integrated in solid angle + atmospheric drag with air co-rotation + an optional **empirical acceleration** in RIC axes (node table, constant and once-per-revolution terms, the classical OD form that the Monte Carlo fills with Gauss-Markov process noise). Per-force breakdown helper for diagnostics. `spody_next_force_discontinuity` returns the next known jump of the force model (NRLMSISE-00 3-hour Ap / daily F10.7 grid, shadow contacts located by Brent on the dense output), so the host can stop a step on it instead of integrating across it. Time: the integrator's `t` is TDB past `et0` by default, or TT for geocentric runs (`time_scale_tt`, IERS TN36 sec. 10.3); `spody_ctx_et` / `spody_ctx_label` keep every query on ET and every file on `ET - et0` in both modes. The body-fixed angular velocity is the true rotation of the frame chain (polar motion included for the Earth, DE440 libration for the Moon). A second RHS, `spody_force_rhs_cr3bp`, integrates the Circular Restricted 3-Body Problem in the synodic rotating frame from the `cr3bp_*` fields of the same context, with converters to and from a primary's inertial frame. |
 | `atmosphere` | Space-weather ingestion (CelesTrak: observed daily F10.7 + storm-time 3-hour Ap history) and the density-scale `k(t)` node table produced by an external calibration, both memory-mapped with the same handle/data split as `ephemeris`. |
 | `nrlmsise00` | Native C port of the NRL MSISE-00 empirical atmosphere (`gtd7` / `gtd7d`), validated against the official NRL reference driver to the printed 7 digits. |
-| `time` | The one time-scale chain: Gregorian↔JD, IERS leap seconds (`spody_tai_minus_utc`), the SPICE `deltet` TDB−TT term (`spody_tdb_minus_tt`), ET↔UTC MJD, day-of-year helpers. ET is true TDB everywhere as a result. |
+| `time` | The one time-scale chain: Gregorian↔JD, Gregorian → seconds past J2000 without forming a whole JD (`spody_greg_to_sec_j2000`, the path of every text epoch), IERS leap seconds (`spody_tai_minus_utc`), the SPICE `deltet` TDB−TT term (`spody_tdb_minus_tt`), ET↔UTC MJD, day-of-year helpers. ET is true TDB everywhere as a result. |
 | `eop` | IERS Earth-orientation reader (`finals2000A.all`): polar motion, UT1−UTC, celestial-pole offsets, interpolated on demand, with observed / predicted coverage accessors. |
 | `earth_orientation` | The IAU 2006/2000A_R06 chain from ICRF to ITRS — precession-nutation `(X, Y, s)` on a fixed hourly grid, Earth rotation angle, polar motion — exposed to the force model as the Earth's body-fixed rotation. Also carries TEME → ICRF, the rotation a GP element set needs on the way out of `sgp4`, where polar motion cancels and only the equation of the origins and the TIO locator survive. |
 | `kepler` | Kepler equation solve (true↔mean anomaly) and Keplerian↔Cartesian conversion. |
-| `interp` | Shared tabulated primitives: bracketing search, linear interpolation, cubic Hermite, and the quintic Hermite on position, velocity and acceleration behind the integrator's dense output — the building blocks under the ephemeris, EOP, space-weather, output-grid and event-refinement paths. |
-| `events` | Event detection during propagation: impact (one-shot), eclipse-fraction threshold crossings and altitude crossings (both recurring, ascending + descending), each localised by Brent root-finding on the integrator's quintic dense output (`spody_dense_state_rv6`), at the integrator's own accuracy. |
+| `interp` | Shared tabulated primitives: bracketing search, linear interpolation, cubic Hermite, Lagrange with its derivative (positions-only precise orbits, velocity from the derivative), and the quintic Hermite on position, velocity and acceleration behind the integrator's dense output — the building blocks under the ephemeris, EOP, space-weather, output-grid and event-refinement paths. |
+| `events` | Event detection during propagation: impact (one-shot), eclipse-fraction threshold crossings and altitude crossings (both recurring, ascending + descending), each localised by Brent root-finding on the integrator's quintic dense output (`spody_dense_state_rv6`), at the integrator's own accuracy. Eclipse contacts at threshold 0 and 1 are located on the angular separation (`spody_get_eclipse_residual`). An event body may be a spheroid: impact and altitude then use the geodetic altitude above it (`spody_event_body_distance`). |
 | `icgem` | Converts an ICGEM `.gfc` spherical-harmonic gravity field into the engine's `.tab` format. |
-| `sp3` | Reads IGS / MGEX SP3 precise orbits (multi-file, concatenated) and writes an ICRF position reference binary. |
+| `sp3` | Reads IGS / MGEX / ILRS SP3 precise orbits (multi-file, concatenated) and writes an ICRF position reference binary. The epoch time system comes from the header (GPS, GAL, QZS, IRN, BDT, UTC, GLO, TAI; SP3-a/-b are GPS time); anything else refuses the file. |
 | `gps` / `glonass` | RINEX-NAV broadcast ephemeris to ICRF state. GPS broadcasts Keplerian elements, so the converter runs the IS-GPS-200 Kepler-with-corrections propagation (plus Remondi velocities); GLONASS broadcasts the state vector directly in PZ-90, so there the work is the terrestrial-to-inertial rotation including the `omega x r` term. |
 | `oem` | Reads CCSDS OEM text ephemerides (multi-file, overlap-deduplicated) into an ICRF state reference binary. |
 | `sgp4` | The analytic propagator that GP element sets (TLE / OMM) are fitted inside of. Their elements are *mean* elements of this theory, not an osculating state, so handing them to a numerical integrator is a physical error rather than an approximation: this module is the theory. Equations from Hoots & Roehrich, Spacetrack Report No. 3 (1980), with the corrections documented in Vallado et al., AIAA 2006-6753; output is TEME. Both branches are present: near-Earth SGP4, and SDP4 for element sets whose period reaches 225 min, carrying the lunisolar secular and periodic terms and the two resonance bands (24 h synchronous, 12 h). The resonance is integrated from epoch on every call rather than carried between them, so a state depends on the requested time alone and one element set can be propagated from several threads at once. Conformance is checked against the test cases published with AIAA 2006-6753: all 33 cases agree with the reference vectors to 1.8e-06 km over 634 points. |
+| `gp` | One GP element set to one osculating ICRF state at its own epoch (`spody_gp_to_state_icrf`): SGP4 at `tsince = 0`, then TEME → ICRF, with the epoch's ET returned alongside. It makes a catalogue state *comparable* with an integrator's, not more accurate: a GP fit stays worth kilometres. |
+| `random` | Reproducible random numbers for Monte Carlo: Philox4x64-10 (Salmon et al., SC'11), counter-based, so any word of any stream is computed directly and a case draws the same numbers whatever the case count, thread count or run order. One substream per dispersed quantity (`spody_random_substream_id`) and a separate stream domain for process noise, so adding or removing a quantity never changes the others' draws. Normal deviates by the AS241 inverse CDF (one uniform → one normal, monotone); `spody_gauss_markov_nodes` draws exact first-order Gauss-Markov node sequences with an optional per-node sigma scale. |
 | `solver` | Scalar root finding: Brent's zeroin (`spody_solver_brent`), the localiser the `events` module runs on the integrator's dense output. Generic over a `double (*)(double, void *)` residual. |
 | `io` | The text log mirror (`spody_log_printf` / `spody_log_eprintf` / `spody_log_open_mirror`): every diagnosis the library prints goes through it, so it lands in the host's log file too. The run loop, the output files and their formats belong to the host (the SpOdy app drives the integrator and events itself). |
-| `math` | Shared math utilities (rotation matrices, vector ops). |
+| `math` | Shared math utilities: rotation matrices (including RIC ↔ ICRF), vector ops, body shapes (`SpodyBodyShape`, IAU WGCCRE pole, geodetic distance above a spheroid), Cholesky factor and cyclic-Jacobi eigen-decomposition of symmetric matrices (covariance sampling). |
 | `mapping` | Cross-platform memory-mapped file I/O (used by the `ephemeris` loader; EOP and space weather are read into memory). |
 | `version` | Compile-time macros + runtime accessors for the library version, git hash (with `-dirty` flag), and build timestamp. |
 
@@ -100,7 +104,7 @@ Spody Core relies on standard, publicly available scientific datasets:
 spody-core/
 ├── include/                  # Public headers — include this folder in your build
 │   ├── spody_core.h          # Umbrella header (include this one)
-│   ├── spody_const.h         # Physical and numerical constants (ALL of them)
+│   ├── spody_const.h         # Shared physical and numerical constants
 │   ├── spody_atmosphere.h
 │   ├── spody_earth_orientation.h
 │   ├── spody_eclipse.h
@@ -109,6 +113,7 @@ spody-core/
 │   ├── spody_events.h
 │   ├── spody_forcemodels.h
 │   ├── spody_glonass.h
+│   ├── spody_gp.h
 │   ├── spody_gps.h
 │   ├── spody_harmonics.h
 │   ├── spody_icgem.h
@@ -120,13 +125,14 @@ spody-core/
 │   ├── spody_math.h
 │   ├── spody_nrlmsise00.h
 │   ├── spody_oem.h
+│   ├── spody_random.h
 │   ├── spody_sgp4.h
 │   ├── spody_solver.h
 │   ├── spody_sp3.h
 │   ├── spody_time.h
 │   └── spody_version.h.in    # Template -> generated as spody_version.h at configure time
 ├── src/                      # Implementation files (.c)
-├── raw_data/                 # External datasets (DE440, GRGM1200B; see raw_data/README.md)
+├── raw_data/                 # External datasets (DE440, GRGM1200A/B; see raw_data/README.md)
 ├── .github/workflows/        # CI (build matrix on linux / macos / windows)
 ├── CMakeLists.txt
 ├── LICENSE
@@ -181,12 +187,8 @@ dist/
 ├── include/
 │   ├── spody_core.h
 │   ├── spody_const.h
-│   ├── spody_eclipse.h
-│   ├── spody_ephemeris.h
-│   ├── spody_harmonics.h
-│   ├── spody_integrators.h
-│   ├── spody_mapping.h
-│   └── spody_math.h
+│   ├── spody_version.h       # generated at configure time
+│   └── ...                   # every other public header of include/
 └── lib/
     └── libspody_core.a    (or spody_core.lib on Windows)
 ```
@@ -305,8 +307,8 @@ Regardless of the integration method, include the umbrella header:
 ```
 
 This exposes the full public API (ephemeris, eclipse, harmonics, integrators,
-force models, events, atmosphere, time, Earth orientation, converters, math,
-mapping).
+force models, events, atmosphere, time, Earth orientation, SGP4 / GP, random
+streams, converters, math, mapping).
 
 ### Quick tour
 
@@ -355,7 +357,8 @@ Both kernels return the **disturbing acceleration** (`-∇V_pert`, n≥2 only); 
 caller adds the result directly to `dvdt`. The two-body central term is summed
 separately and is provided by `spody_force_twobody`.
 
-**Numerical integrator** (RKDP45 adaptive on a 6-state two-body propagation):
+**Numerical integrator** (RKDP45 adaptive on a 6-state two-body propagation;
+`SPODY_INTEG_DOP853` is a drop-in replacement):
 
 ```c
 typedef struct { double mu; } Params;
